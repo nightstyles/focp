@@ -1,0 +1,32 @@
+##################################################
+# 数据文件格式定义规范：
+#   （1）字符#开始的行为注释行，#字符前可有多个空白字符，空行也相当于注释行
+#   （2）第一个非注释行为列名行（列名采用C语言标识符词法），其它非注释行为数据行。
+#   （3）列之间采用空格或水平制表符隔开。
+#   （4）行之间采用[回车]换行符隔开。
+#   （5）列值支持转义符表达【单引号、双引号可直接使用】：
+#        \w  空格【新增】
+#        \r  回车
+#        \n  换行
+#        \f  换页
+#        \b  退格
+#        \v  垂直制表
+#        \t  水平制表
+#        \a  警告
+#        \[x|X]HH 十六进制转义
+#        \任何字符 任何字符
+#   （6）空值：NULL[大小写无关]，文本NULL可用N\ULL表示
+########################################################################################
+# 本表定义应用的MDB复制模块配置【根据MdbService定向提取】
+# MdbName:        STRING 本地数据库名
+# MdbDomain       UINT32 该数据库的数据复制域（AcmDomain中定义）
+# OdbcSource:     STRING ODBC 数据源定义，NULL表示该数据库不支持ODBC存储
+# EventDb:        STRING 事件数据库名，NULL表示取缺省值sysdb
+# EventTable:     STRING 事件表名，NULL表示取缺省值MdbName+"StoreEvent"
+# SupportStorage: UINT32 0表示不参与入ODBC数据库工作，1表示参与。
+#                        相同Domain下所有节点竞争获得入库权限，整个Domain中仅有一个节点
+#                        负责入库任务。
+########################################################################################
+MdbName    MdbDomain   OdbcSource                                             EventDb     EventTable   SupportStorage
+Mdb        0           fH9zeHp4ampqagczDihqampqJzM6LT85LzhqampqJzM6LT85Lzg=   NULL        NULL         1
+sysdb      0           fH9zeHp4ampqagczDihqampqJzM6LT85LzhqampqJzM6LT85Lzg=   NULL        NULL         1

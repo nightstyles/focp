@@ -1,0 +1,687 @@
+
+-->begin
+#if !defined(_jc_scanner_h_)
+#define _jc_scanner_h_
+
+#include "jc_api.h"
+#include "jc_type.h"
+
+typedef const jc_char* (JC_CALL* FGetLineFromSource)(void* pSource, jc_int * pLine, jc_char** sFileName);
+
+#define JCC_CHAR_MAX 255
+#define MAX_BUFFER_LENGTH (64*1024)
+#define HEAP_BLOCK_SIZE (64*1024)
+
+typedef struct CJcToken{
+	int kind;			/* token kind */
+	int pos;			/* token position in the source text (starting at 0) */
+	int col;			/* token column (starting at 1) */
+	int line;			/* token line (starting at 1) */
+	int fcol, fline;	/* fact col & line */
+	char* val;			/* token value */
+	char* fname;		/* file name */
+	struct CJcToken* next;
+}CJcToken;
+
+/* assumpsit: 
+	return NULL or "", is file end;
+	EOL is '\n';
+*/
+static const jc_int EoF = JCC_CHAR_MAX+1;
+
+typedef struct CJcFileNameList{
+	jc_char sFileName[256];
+	struct CJcFileNameList* pNext;
+}CJcFileNameList;
+
+typedef struct CJcSourceLine{
+	jc_int nPos;
+	jc_int nLine;
+	jc_int nSize;
+	jc_char* sLine;
+	jc_char* sFileName;
+}CJcSourceLine;
+
+typedef struct CJcSourceLineList{
+	CJcSourceLine* pLine;
+	struct CJcSourceLineList *pNext, *pPrev;
+}CJcSourceLineList;
+
+typedef struct CJcBuffer{
+	void* pSource;
+	FGetLineFromSource GetLine;
+	CJcFileNameList* pFileNameList;
+	CJcSourceLineList *pHead, *pTail;
+	jc_int nPos;
+	CJcSourceLineList* pCurLine;
+	jc_int nOff;
+}CJcBuffer;
+
+/*********************************************************************************************
+CJcStartStates  -- maps charactes to start states of tokens
+**********************************************************************************************/
+typedef struct CJcStateElem
+{
+	jc_int nKey, nVal;
+	struct CJcStateElem *pNext;
+}CJcStateElem;
+typedef struct CJcStartStates
+{
+	CJcStateElem ** pStateTable;
+}CJcStartStates;
+
+/*********************************************************************************************
+CJcKeywordMap  -- maps strings to integers (identifiers to keyword kinds)
+**********************************************************************************************/
+typedef struct CJcKeywordElem
+{
+	jc_char* sKey;
+	jc_int nVal;
+	struct CJcKeywordElem *pNext;
+}CJcKeywordElem;
+typedef struct CJcKeywordMap
+{
+	CJcKeywordElem ** pKeywordTable;
+}CJcKeywordMap;
+
+typedef struct CJcScanner{
+	void *pFirstHeap;
+	void *pHeap;
+	void *pHeapTop;
+	void **pHeapEnd;
+
+	char EOL;
+	int eofSym;
+	int noSym;
+	int maxT;
+	int charSetSize;
+	CJcStartStates start;
+	CJcKeywordMap keywords;
+
+	CJcToken *t;		/* current token */
+	char *tval;			/* text of current token */
+	int tvalLength;		/* length of text of current token */
+	int tlen;			/* length of current token */
+
+	CJcToken *tokens;	/* list of tokens already peeked (first token is a dummy) */
+	CJcToken *pt;		/* current peek token */
+
+	int ch;				/* current input character */
+-->casing0
+	int pos;			/* byte position of current character */
+	int line;			/* line number of current character */
+	int col;			/* column number of current character */
+	int oldEols;		/* EOLs that appeared in a comment; */
+	
+	CJcBuffer *buffer;	/* scanner buffer */
+}CJcScanner;
+
+void InitializeScanner(CJcScanner* scanner, void* source, FGetLineFromSource getline);
+void DestroyScanner(CJcScanner* scanner);
+void BeginScan(CJcScanner* scanner);
+
+void InitializeToken(CJcToken* pToken);
+void DestroyToken(CJcToken* pToken);
+CJcToken* ScanToken(CJcScanner* scanner);
+CJcToken* PeekToken(CJcScanner* scanner);
+void ResetPeek(CJcScanner* scanner);
+
+#endif /* !defined(JCC_SCANNER_H__) */
+
+-->implementation
+-->begin
+#include "jc_scanner.h"
+
+static void InitializeBuffer(CJcBuffer* pBuffer, void* pSource, FGetLineFromSource GetLine);
+static void DestroyBuffer(CJcBuffer* pBuffer);
+static jc_int Read(CJcBuffer* pBuffer);
+static jc_int Peek(CJcBuffer* pBuffer);
+static jc_char* GetString(CJcBuffer* pBuffer, jc_int beg, jc_int end);
+static jc_int GetPos(CJcBuffer* pBuffer);
+static void SetPos(CJcBuffer* pBuffer, jc_int nPos);
+static jc_int GetLine(CJcBuffer* pBuffer);
+static jc_int GetCol(CJcBuffer* pBuffer);
+static jc_char* GetFileName(CJcBuffer* pBuffer);
+
+static void InitializeStateElem(CJcStateElem* elem, jc_int nKey, jc_int nVal);
+static void InitializeStartStates(CJcStartStates* states);
+static void DestroyStartStates(CJcStartStates* states);
+static void SetStartState(CJcStartStates* states, jc_int nKey, jc_int nVal);
+static jc_int GetStartState(CJcStartStates* states, jc_int nKey);
+
+static void InitializeKeywordElem(CJcKeywordElem* elem, jc_char* sKey, jc_int nVal);
+static void DestroyKeywordElem(CJcKeywordElem* elem);
+static void InitializeKeywordMap(CJcKeywordMap* map);
+static void DestroyKeywordMap(CJcKeywordMap* map);
+static void SetKeyword(CJcKeywordMap* map, const jc_char* sKey, jc_int nVal);
+static jc_int GetKeyword(CJcKeywordMap* map, const jc_char* sKey, jc_int defaultVal);
+
+static void CreateHeapBlock(CJcScanner* pScanner);
+static CJcToken* CreateToken(CJcScanner* pScanner);
+static void AppendVal(CJcScanner* pScanner, CJcToken *pToken);
+static void Init(CJcScanner* pScanner);
+static void NextCh(CJcScanner* pScanner);
+static void AddCh(CJcScanner* pScanner);
+-->commentsheader
+static CJcToken* NextToken(CJcScanner* pScanner);
+
+static jc_int jcc_string_hash(const jc_char *data)
+{
+	jc_int h = 0;
+	if (!data)
+		return 0;
+	while(*data != 0)
+	{
+		h = (h * 7) ^ *data;
+		++data;
+	}
+	if (h < 0)
+		h = -h;
+	return h;
+}
+
+static jc_char* jcc_string_create_lower_ax(const jc_char* data, jc_int startIndex, jc_int dataLen)
+{
+	jc_int i;
+	jc_char* newData;
+	if (!data)
+		return NULL;
+	newData = (jc_char*)g_oInterface.Malloc(dataLen + 1);
+	for(i = 0; i <= dataLen; i++)
+	{
+		jc_char ch = data[startIndex + i];
+		if (('A' <= ch) && (ch <= 'Z'))
+			newData[i] = ch - ('A' - 'a');
+		else
+			newData[i] = ch;
+	}
+	newData[dataLen] = '\0';
+	return newData;
+}
+
+static jc_char* jcc_string_create_lower(const jc_char* data)
+{
+	if (!data)
+		return NULL;
+	return jcc_string_create_lower_ax(data, 0, StringLength(data));
+}
+
+static jc_char* jcc_string_create(const jc_char *value , jc_int startIndex, jc_int length)
+{
+	jc_int len = 0;
+	jc_char* data;
+
+	if(value)
+		len = length;
+	data = (jc_char*)g_oInterface.Malloc(len + 1);
+	StringCopyN(data, &(value[startIndex]), len);
+	data[len] = 0;
+
+	return data;
+}
+
+void InitializeToken(CJcToken* pToken){
+	pToken->kind = 0;
+	pToken->pos  = 0;
+	pToken->col  = 0;
+	pToken->line = 0;
+	pToken->fcol  = 0;
+	pToken->fline = 0;
+	pToken->val  = NULL;
+	pToken->fname = NULL;
+	pToken->next = NULL;
+}
+
+void DestroyToken(CJcToken* pToken){
+	if(pToken->val){
+		g_oInterface.Free(pToken->val);
+		pToken->val = NULL;
+	}
+}
+
+static void InitializeBuffer(CJcBuffer* pBuffer, void* pSource, FGetLineFromSource GetLine)
+{
+	pBuffer->pSource = pSource;
+	pBuffer->GetLine = GetLine;
+	pBuffer->pFileNameList = NULL;
+	pBuffer->pHead = pBuffer->pTail = NULL;
+	pBuffer->nPos = 0;
+	pBuffer->pCurLine = NULL;
+	pBuffer->nOff = 0;
+}
+
+static void DestroyBuffer(CJcBuffer* pBuffer)
+{
+	while(pBuffer->pFileNameList)
+	{
+		CJcFileNameList* pNext = pBuffer->pFileNameList->pNext;
+		g_oInterface.Free(pBuffer->pFileNameList);
+		pBuffer->pFileNameList = pNext;
+	}
+	while(pBuffer->pHead)
+	{
+		pBuffer->pTail = pBuffer->pHead->pNext;
+		if(pBuffer->pHead->pLine)
+		{
+			if(pBuffer->pHead->pLine->sLine)
+				g_oInterface.Free(pBuffer->pHead->pLine->sLine);
+			g_oInterface.Free(pBuffer->pHead->pLine);
+		}
+		g_oInterface.Free(pBuffer->pHead);
+		pBuffer->pHead = pBuffer->pTail;
+	}
+	pBuffer->nPos = 0;
+	pBuffer->pCurLine = NULL;
+	pBuffer->nOff = 0;
+}
+
+static jc_int Read(CJcBuffer* pBuffer)
+{
+	jc_char c;
+	if(!pBuffer->pCurLine)
+	{
+		const jc_char* sLine;
+		pBuffer->pCurLine = (CJcSourceLineList*)g_oInterface.Malloc(sizeof(CJcSourceLineList));
+		pBuffer->pCurLine->pLine = (CJcSourceLine*)g_oInterface.Malloc(sizeof(CJcSourceLine));
+		pBuffer->pCurLine->pNext = NULL;
+		sLine = pBuffer->GetLine(pBuffer->pSource, &pBuffer->pCurLine->pLine->nLine, &pBuffer->pCurLine->pLine->sFileName);
+		if(!sLine)
+			sLine = "";
+		pBuffer->pCurLine->pLine->nPos = pBuffer->nPos;
+		pBuffer->pCurLine->pLine->nSize = StringLength(sLine);
+		pBuffer->pCurLine->pLine->sLine = StringDuplicate(sLine);
+		pBuffer->pCurLine->pPrev = pBuffer->pTail;
+		if(pBuffer->pTail)
+			pBuffer->pTail->pNext = pBuffer->pCurLine;
+		else
+			pBuffer->pHead = pBuffer->pCurLine;
+		pBuffer->pTail = pBuffer->pCurLine;
+		pBuffer->nOff = 0;
+	}
+	c = pBuffer->pCurLine->pLine->sLine[pBuffer->nOff];
+	++pBuffer->nOff;
+	if(pBuffer->nOff >= pBuffer->pCurLine->pLine->nSize)
+	{
+		if(!c || c == -1)
+		{
+			--pBuffer->nOff;
+			return EoF;
+		}
+		pBuffer->pCurLine = pBuffer->pCurLine->pNext;
+		pBuffer->nOff = 0;
+	}
+	++pBuffer->nPos;
+	return (jc_int)(jc_uchar)c;
+}
+
+static jc_int Peek(CJcBuffer* pBuffer)
+{
+	jc_int curPos = GetPos(pBuffer);
+	jc_int ch = Read(pBuffer);
+	SetPos(pBuffer, curPos);
+	return ch;
+}
+
+static jc_char* GetString(CJcBuffer* pBuffer, jc_int beg, jc_int end)
+{
+	jc_int i, len = end - beg;
+	jc_char *buf = (jc_char*)g_oInterface.Malloc(len);
+	jc_int oldPos = GetPos(pBuffer);
+	SetPos(pBuffer, beg);
+	for (i = 0; i < len; ++i)
+		buf[i] = (jc_char)Read(pBuffer);
+	SetPos(pBuffer, oldPos);
+	return buf;
+}
+
+static jc_int GetPos(CJcBuffer* pBuffer)
+{
+	return pBuffer->nPos;
+}
+
+static void SetPos(CJcBuffer* pBuffer, jc_int nPos)
+{
+	if (nPos < 0)
+		nPos = 0;
+	if(pBuffer->nPos == nPos)
+		return;
+	if(!pBuffer->pCurLine)
+		pBuffer->pCurLine = pBuffer->pTail;
+	while(1)
+	{
+		if(!pBuffer->pCurLine)
+			Peek(pBuffer);
+		if(!pBuffer->pCurLine->pLine->sLine[0])
+			break;
+		if(pBuffer->pCurLine->pLine->nPos > nPos)
+			pBuffer->pCurLine = pBuffer->pCurLine->pPrev;
+		else if(pBuffer->pCurLine->pLine->nPos + pBuffer->pCurLine->pLine->nSize > nPos)
+		{
+			pBuffer->nOff = nPos - pBuffer->pCurLine->pLine->nPos;
+			pBuffer->nPos = nPos;
+		}
+		else
+		{
+			pBuffer->nPos = pBuffer->pCurLine->pLine->nPos + pBuffer->pCurLine->pLine->nSize;
+			pBuffer->pCurLine = pBuffer->pCurLine->pNext;
+			pBuffer->nOff = 0;
+		}
+	}
+}
+
+static jc_int GetLine(CJcBuffer* pBuffer)
+{
+	if(!pBuffer->pCurLine)
+		Peek(pBuffer);
+	return pBuffer->pCurLine->pLine->nLine;
+}
+
+static jc_int GetCol(CJcBuffer* pBuffer)
+{
+	return pBuffer->nOff;
+}
+
+static jc_char* GetFileName(CJcBuffer* pBuffer)
+{
+	if(!pBuffer->pCurLine)
+		Peek(pBuffer);
+	return pBuffer->pCurLine->pLine->sFileName;
+}
+
+static void InitializeStateElem(CJcStateElem* elem, jc_int nKey, jc_int nVal)
+{
+	elem->nKey = nKey;
+	elem->nVal = nVal;
+	elem->pNext = NULL;
+}
+
+static void InitializeStartStates(CJcStartStates* states)
+{
+	states->pStateTable = (CJcStateElem**)g_oInterface.Malloc(128*sizeof(void*));
+	MemorySet(states->pStateTable, 0, 128 * sizeof(void*));
+}
+
+static void DestroyStartStates(CJcStartStates* states)
+{
+	jc_int i;
+	for (i = 0; i < 128; ++i)
+	{
+		CJcStateElem *e = states->pStateTable[i];
+		while (e != NULL)
+		{
+			CJcStateElem *pNext = e->pNext;
+			g_oInterface.Free(e);
+			e = pNext;
+		}
+	}
+	g_oInterface.Free(states->pStateTable);
+}
+
+static void SetStartState(CJcStartStates* states, jc_int nKey, jc_int nVal)
+{
+	jc_int k = nKey % 128;
+	CJcStateElem *e = (CJcStateElem*)g_oInterface.Malloc(sizeof(CJcStateElem));
+	InitializeStateElem(e, nKey, nVal);
+	e->pNext = states->pStateTable[k];
+	states->pStateTable[k] = e;
+}
+
+static jc_int GetStartState(CJcStartStates* states, jc_int nKey)
+{
+	CJcStateElem *e = states->pStateTable[nKey % 128];
+	while (e != NULL && e->nKey != nKey)
+		e = e->pNext;
+	return e == NULL ? 0 : e->nVal;
+}
+
+static void InitializeKeywordElem(CJcKeywordElem* elem, jc_char* sKey, jc_int nVal)
+{
+	elem->sKey = StringDuplicate(sKey);
+	elem->nVal = nVal;
+	elem->pNext = NULL;
+}
+
+static void DestroyKeywordElem(CJcKeywordElem* elem)
+{
+	g_oInterface.Free(elem->sKey);
+}
+
+static void InitializeKeywordMap(CJcKeywordMap* map)
+{
+	map->pKeywordTable = (CJcKeywordElem**)g_oInterface.Malloc(128*sizeof(void*));
+	MemorySet(map->pKeywordTable, 0, 128 * sizeof(void*));
+}
+
+static void DestroyKeywordMap(CJcKeywordMap* map)
+{
+	jc_int i;
+	for (i = 0; i < 128; ++i)
+	{
+		CJcKeywordElem *e = map->pKeywordTable[i];
+		while (e != NULL)
+		{
+			CJcKeywordElem *pNext = e->pNext;
+			DestroyKeywordElem(e);
+			g_oInterface.Free(e);
+			e = pNext;
+		}
+	}
+	g_oInterface.Free(map->pKeywordTable);
+}
+
+static void SetKeyword(CJcKeywordMap* map, const jc_char* sKey, jc_int nVal)
+{
+	jc_int k = jcc_string_hash(sKey) % 128;
+	CJcKeywordElem *e = (CJcKeywordElem*)g_oInterface.Malloc(sizeof(CJcStateElem));
+	InitializeKeywordElem(e, (jc_char*)sKey, nVal);
+	e->pNext = map->pKeywordTable[k];
+	map->pKeywordTable[k] = e;
+}
+
+static jc_int GetKeyword(CJcKeywordMap* map, const jc_char* sKey, jc_int defaultVal)
+{
+	CJcKeywordElem *e = map->pKeywordTable[jcc_string_hash(sKey) % 128];
+	while (e != NULL && StringCompare(e->sKey, sKey))
+		e = e->pNext;
+	return e == NULL ? defaultVal : e->nVal;
+}
+
+static void CreateHeapBlock(CJcScanner* pScanner)
+{
+	void* newHeap;
+	jc_char* pHeap = (jc_char*) pScanner->pFirstHeap;
+
+	while(((jc_char*) pScanner->tokens < pHeap) || ((jc_char*) pScanner->tokens > (pHeap + HEAP_BLOCK_SIZE)))
+	{
+		pHeap = *((jc_char**) (pHeap + HEAP_BLOCK_SIZE));
+		g_oInterface.Free(pScanner->pFirstHeap);
+		pScanner->pFirstHeap = pHeap;
+	}
+
+	/* HEAP_BLOCK_SIZE byte heap + pointer to next heap block */
+	newHeap = g_oInterface.Malloc(HEAP_BLOCK_SIZE + sizeof(void*));
+	*pScanner->pHeapEnd = newHeap;
+	pScanner->pHeapEnd = (void**) (((jc_char*) newHeap) + HEAP_BLOCK_SIZE);
+	*pScanner->pHeapEnd = 0;
+	pScanner->pHeap = newHeap;
+	pScanner->pHeapTop = pScanner->pHeap;
+}
+
+static CJcToken* CreateToken(CJcScanner* pScanner)
+{
+	CJcToken *pToken;
+	if (((jc_char*) pScanner->pHeapTop + (jc_int) sizeof(CJcToken)) >= (jc_char*) pScanner->pHeapEnd)
+		CreateHeapBlock(pScanner);
+	pToken = (CJcToken*) pScanner->pHeapTop;
+	pScanner->pHeapTop = (void*) ((jc_char*) pScanner->pHeapTop + sizeof(CJcToken));
+	pToken->val = NULL;
+	pToken->next = NULL;
+	return pToken;
+}
+
+static void AppendVal(CJcScanner* pScanner, CJcToken *pToken)
+{
+	jc_int reqMem = (pScanner->tlen + 1) * sizeof(jc_char);
+	if (((jc_char*) pScanner->pHeapTop + reqMem) >= (jc_char*) pScanner->pHeapEnd)
+	{
+		if(reqMem > HEAP_BLOCK_SIZE)
+		{
+			g_oInterface.PrintError(0, "%s\n", "--- Too long token value");
+			g_oInterface.Abort();
+		}
+		CreateHeapBlock(pScanner);
+	}
+	pToken->val = (jc_char*) pScanner->pHeapTop;
+	pScanner->pHeapTop = (void*) ((jc_char*) pScanner->pHeapTop + reqMem);
+	StringCopyN(pToken->val, pScanner->tval, pScanner->tlen);
+	pToken->val[pScanner->tlen] = '\0';
+}
+
+static void Init(CJcScanner* scanner){
+	jc_int i;
+	scanner->EOL = '\n';
+	scanner->eofSym = 0;
+-->declarations
+	scanner->tvalLength = 128;
+	scanner->tval = (char*)g_oInterface.Malloc(scanner->tvalLength); /* text of current token */
+
+	/* HEAP_BLOCK_SIZE byte heap + pointer to next heap block */
+	scanner->pHeap = g_oInterface.Malloc(HEAP_BLOCK_SIZE + sizeof(void*));
+	scanner->pFirstHeap = scanner->pHeap;
+	scanner->pHeapEnd = (void**) (((char*) scanner->pHeap) + HEAP_BLOCK_SIZE);
+	*scanner->pHeapEnd = 0;
+	scanner->pHeapTop = scanner->pHeap;
+	if(sizeof(CJcToken) > HEAP_BLOCK_SIZE){
+		g_oInterface.PrintError(0, "--- Too small HEAP_BLOCK_SIZE\n");
+		g_oInterface.Abort();
+	}
+
+	scanner->pos = -1;
+	scanner->line = 1;
+	scanner->col = 0;
+	scanner->oldEols = 0;
+}
+
+void BeginScan(CJcScanner* scanner){
+	NextCh(scanner);
+-->initialization
+	scanner->pt = scanner->tokens = CreateToken(scanner); /* first token is a dummy */
+}
+
+static void NextCh(CJcScanner* scanner){
+	if (scanner->oldEols > 0){
+		scanner->ch = scanner->EOL;
+		scanner->oldEols--;
+	}
+	else{
+		scanner->pos = GetPos(scanner->buffer);
+		scanner->ch = Read(scanner->buffer);
+		scanner->col++;
+		/* replace isolated '\r' by '\n' in order to make
+		   eol handling uniform across Windows, Unix and Mac */
+		if (scanner->ch == '\r' && Peek(scanner->buffer) != '\n')
+			scanner->ch = scanner->EOL;
+		if (scanner->ch == scanner->EOL){
+			scanner->line++;
+			scanner->col = 0;
+		}
+	}
+-->casing1
+}
+
+static void AddCh(CJcScanner* scanner){
+	char *newBuf;
+	if (scanner->tlen >= scanner->tvalLength){
+		scanner->tvalLength *= 2;
+		newBuf = (char*)g_oInterface.Malloc(scanner->tvalLength);
+		MemoryCopy(newBuf, scanner->tval, scanner->tlen*sizeof(char));
+		g_oInterface.Free(scanner->tval);
+		scanner->tval = newBuf;
+	}
+-->casing2
+	NextCh(scanner);
+}
+
+-->comments
+
+#define free g_oInterface.Free
+static CJcToken* NextToken(CJcScanner* scanner){
+	jc_int state;
+	while (scanner->ch == ' ' ||
+-->scan1
+	) NextCh(scanner);
+-->scan2
+	scanner->t = CreateToken(scanner);
+	scanner->t->fcol = GetCol(scanner->buffer);
+	scanner->t->fline = GetLine(scanner->buffer);
+	scanner->t->fname = GetFileName(scanner->buffer);
+	scanner->t->pos = scanner->pos;
+	scanner->t->col = scanner->col;
+	scanner->t->line = scanner->line;
+	state = GetStartState(&scanner->start, scanner->ch);
+	scanner->tlen = 0;
+	AddCh(scanner);
+
+	switch (state){
+	case -1:
+		scanner->t->kind = scanner->eofSym;
+		break;
+	case 0:
+		scanner->t->kind = scanner->noSym;
+		break;
+-->scan3
+	}
+	AppendVal(scanner, scanner->t);
+	return scanner->t;
+}
+
+void InitializeScanner(CJcScanner* scanner, void* source, FGetLineFromSource getline){
+	scanner->buffer = (CJcBuffer*)g_oInterface.Malloc(sizeof(CJcBuffer));
+	InitializeBuffer(scanner->buffer, source, getline);
+	InitializeStartStates(&scanner->start);
+	InitializeKeywordMap(&scanner->keywords);
+	Init(scanner);
+}
+
+void DestroyScanner(CJcScanner* scanner){
+	char* cur = (char*) scanner->pFirstHeap;
+	while(cur != NULL){
+		cur = *(char**) (cur + HEAP_BLOCK_SIZE);
+		g_oInterface.Free(scanner->pFirstHeap);
+		scanner->pFirstHeap = cur;
+	}
+	g_oInterface.Free(scanner->tval);
+	DestroyBuffer(scanner->buffer);
+	g_oInterface.Free(scanner->buffer);
+	DestroyKeywordMap(&scanner->keywords);
+	DestroyStartStates(&scanner->start);
+}
+
+/* get the next token (possibly a token already seen during peeking) */
+CJcToken* ScanToken(CJcScanner* scanner){
+	if (scanner->tokens->next == NULL)
+		return scanner->pt = scanner->tokens = NextToken(scanner);
+	return scanner->pt = scanner->tokens = scanner->tokens->next;
+}
+
+/* peek for the next token, ignore pragmas */
+CJcToken* PeekToken(CJcScanner* scanner){
+	if (scanner->pt->next == NULL)	{
+		do{
+			scanner->pt = scanner->pt->next = NextToken(scanner);
+		} while (scanner->pt->kind > scanner->maxT); /* skip pragmas */
+	}
+	else{
+		do{
+			scanner->pt = scanner->pt->next; 
+		} while (scanner->pt->kind > scanner->maxT);
+	}
+	return scanner->pt;
+}
+
+/* make sure that peeking starts at the current scan position */
+void ResetPeek(CJcScanner* scanner){
+	scanner->pt = scanner->tokens;
+}
+
+$$$

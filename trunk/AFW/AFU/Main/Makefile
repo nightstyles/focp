@@ -1,0 +1,34 @@
+
+ifeq ($(FOCP_VOB_DIR),)
+	ifneq ($(SVNVOB),)
+		FOCP_VOB_DIR=$(SVNVOB)
+	else
+		ifneq ($(SVNREP),)
+			FOCP_VOB_DIR=$(SVNREP)
+		else
+			FOCP_VOB_DIR=/vob
+		endif
+	endif
+endif
+
+ifeq ($(FOCP_MODULE_NAME),)
+	FOCP_MODULE_NAME=$(FOCP_APP_NAME)
+endif
+
+ifneq ($(FOCP_FREE_LICENSE),)
+	FOCP_MACRO_DEFINES+=FOCP_FREE_LICENSE
+endif
+
+FOCP_TARGET_TYPE=EXE
+FOCP_OBJ_DIR?=$(FOCP_OBJ_HOME)/Main
+
+FOCP_INCLUDE_LIST+=$(FOCP_VOB_DIR)/focp/AFW/AFC
+FOCP_SOURCE_LIST+=$(FOCP_VOB_DIR)/focp/AFW/AFU/Main
+
+FOCP_LIBDIR_LIST+=$(FOCP_VOB_DIR)/focp/Release/AFC/lib/$(FOCP_OS_NAME)/$(FOCP_COMPILER)
+
+FOCP_OTHER_LIST+=$(FOCP_VOB_DIR)/focp/AFW/Copy.mak
+
+include $(FOCP_VOB_DIR)/focp/AFW/AFC/AfcLib.incl
+include $(FOCP_VOB_DIR)/focp/MakeOption/option.incl
+

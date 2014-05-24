@@ -1,0 +1,2061 @@
+
+#include "jc_expr.h"
+#include "jc_symbol.h"
+#include "jc_goto.h"
+#include "jc_break.h"
+#include "jc_continue.h"
+#include "jc_switch.h"
+#include "jc_struct.h"
+#include "jc_enum.h"
+#include "jc_array.h"
+
+COMPILER Main
+	CJcSymbolStack oSymbolStack;
+	CJcGotoStack oGotoStack;
+	CJcBreakStack oBreakStack;
+	CJcContinueStack oContinueStack;
+	CJcSwitchStack oSwitchStack;
+	CJcFunctionInfo* pFunction;
+	jc_bool bSupportHostSymbol;
+	jc_bool bSupportShareSymbol;
+
+CHARACTERS
+	letter = 'A'..'Z' + 'a'..'z' + '_' .
+	digit = '0'..'9' .
+	oct = '0'..'7' .
+	esc = 'a' + 'b' + 'f' + 'n' + 'r' + 't' + 'v' + '\'' + '\"' + '\\' + '?' .
+	hex = digit + 'A'..'F' + 'a'..'f' .
+	CharCh = ANY - '\'' - '\\' - '\r' - '\n' .
+	StringCh = ANY - '\"' - '\\' - '\r' - '\n' .
+	natural = '1'..'9' .
+
+TOKENS
+	Identifier = letter {letter | digit} .
+	CharConst =   '\'' ( '\\' ( esc | oct [oct] [oct] | ('x'|'X') hex [hex] ) | CharCh ) '\'' .
+	StringConst = '\"' { '\\' ( esc | oct [oct] [oct] | ('x'|'X') hex [hex] ) | StringCh } '\"' .
+	IntegerConst = ( (natural {digit}) | '0' (('x'|'X') hex {hex} | {oct} ) ) [ ('U'|'u') [ ('l'|'L') | "8"|"16"|"32"|"64"] | ('i'|'I') ("8"|"16"|"32"|"64") ] .
+	FloatConst = ('.' digit {digit} [('e'|'E') ['+'|'-'] digit {digit}] | digit {digit} ('.' [digit {digit}] [('e'|'E') ['+'|'-'] digit {digit}] | ('e'|'E') ['+'|'-'] digit {digit})) ['f'|'F'] .
+
+	auto = "auto" .
+	break = "break" .
+	case = "case" .
+	char = "char" .
+	const = "const" .
+	continue = "continue" .
+	default = "default" .
+	do = "do" .
+	double = "double" .
+	else = "else" .
+	enum = "enum" .
+	extern = "extern" .
+	float = "float" .
+	for = "for" .
+	goto = "goto" .
+	host = "host" .
+	if = "if" .
+	int = "int" .
+	long = "long" .
+	register = "register" .
+	return = "return" .
+	share = "share" .
+	short = "short" .
+	signed = "signed" .
+	sizeof = "sizeof" .
+	static = "static" .
+	struct = "struct" .
+	switch = "switch" .
+	typedef = "typedef" .
+	union = "union" .
+	unsigned = "unsigned" .
+	void = "void" .
+	volatile = "volatile" .
+	while = "while" .
+
+	ellipsis = "..." .
+	rshifteq = ">>=" .
+	lshifteq = "<<=" .
+	noteq = "!=" .
+	modeq = "%=" .
+	xoreq = "^=" .
+	andeq = "&=" .
+	muleq = "*=" .
+	subeq = "-=" .
+	addeq = "+=" .
+	oreq = "|=" .
+	diveq = "/=" .
+	mteq = ">=" .
+	lteq = "<=" .
+	equal = "==" .
+	lshift = "<<" .
+	rshift = ">>" .
+	land = "&&" .
+	lor = "||" .
+	pointer = "->" .
+	inc = "++" .
+	dec = "--" .
+	tilde = "~" .
+	not = "!" .
+	mod = "%" .
+	xor = "^" .
+	and = "&" .
+	mul = "*" .
+	lparentheses = "(" .
+	rparentheses = ")" .
+	sub = "-" .
+	add = "+" .
+	assign = "=" .
+	lbrace = "{" | "<%" .
+	rbrace = "}" | "%>" .
+	lbrack = "[" | "<:" .
+	rbrack = "]" | ":>" .
+	or = "|" .
+	colon = ":" .
+	scolon = ";" .
+	lt = "<" .
+	mt = ">" .
+	comma = "," .
+	dot = "." .
+	quest = "?" .
+	div = "/" .
+
+IGNORE '\t' + '\r' + '\n'
+
+PRODUCTIONS
+	OnInitializeParser<int argc, char* argv[]> =
+	(.
+		parser->bSupportHostSymbol = TestOption(argc, argv, "-H");
+		parser->bSupportShareSymbol = TestOption(argc, argv, "-S");
+		InitializeSymbolStack(&parser->oSymbolStack);
+		InitializeGotoStack(&parser->oGotoStack);
+		InitializeBreakStack(&parser->oBreakStack);
+		InitializeContinueStack(&parser->oContinueStack);
+		InitializeSwitchStack(&parser->oSwitchStack);
+		parser->oSymbolStack.pParser = parser;
+	.) .
+
+	OnDestroyParser =
+	(.
+		ClearSwitchStack(&parser->oSwitchStack);
+		ClearContinueStack(&parser->oContinueStack);
+		ClearBreakStack(&parser->oBreakStack);
+		ClearGotoStack(&parser->oGotoStack);
+		ClearSymbolStack(&parser->oSymbolStack);
+	.) .
+
+	OnGetToken =
+	(.
+		if(parser->la->kind == parser->_host && !parser->bSupportHostSymbol)
+			parser->la->kind = parser->_Identifier;
+		else if(parser->la->kind == parser->_share && !parser->bSupportShareSymbol)
+			parser->la->kind = parser->_Identifier;
+	.) .
+
+	Main =
+	(
+		(.
+			jc_uint bShouldBeDeclaration, nHasType;
+			CJcGotoFillError oError;
+			parser->pFunction = NULL;
+			NewVariableTable(&parser->oSymbolStack.oDataSegment);
+			NewVariableTable(&parser->oSymbolStack.oGlobalStack);
+			NewSymbolTable(&parser->oSymbolStack);
+			NewGotoTable(&parser->oGotoStack);
+		.)
+		{
+			(.
+				nHasType = 0;
+				bShouldBeDeclaration = 0;
+				if(IsTypeSpecifier(&parser->oSymbolStack, Get(parser)->kind, Get(parser)->val)){
+					nHasType = 1;
+					bShouldBeDeclaration = 1;
+				}
+				else{
+					CJcSymbol oSymbol;
+					CJcToken* pToken = Get(parser);
+					if(pToken->kind == parser->_Identifier && FindSymbol(&parser->oSymbolStack, pToken->val, 1, &oSymbol)){
+						pToken = PeekToken(parser->scanner);
+						if(pToken->kind == parser->_lparentheses){
+							pToken = PeekToken(parser->scanner);
+							if(pToken->kind == parser->_rparentheses){
+								pToken = PeekToken(parser->scanner);
+								if(pToken->kind == parser->_lbrace)
+									bShouldBeDeclaration = 1;
+							}
+							else if(IsTypeSpecifier(&parser->oSymbolStack, pToken->kind, pToken->val))
+								bShouldBeDeclaration = 1;
+							else if(pToken->kind == parser->_Identifier){
+								pToken = PeekToken(parser->scanner);
+								if(pToken->kind == parser->_Identifier)
+									bShouldBeDeclaration = 1;
+							}
+						}
+						ResetPeek(parser->scanner);
+					}
+				}
+			.)
+			( IF(bShouldBeDeclaration) Declaration<nHasType> | Statement )
+		}
+		EOF
+		(.
+			while(BackFillGotoStack(&parser->oGotoStack, &parser->oSymbolStack.oCodeSegment, &oError))
+				SetErrorEx(parser, 0, oError.sFileName, oError.nLine, oError.nCol, "missing label '%s'", oError.sLabel);
+			PopGotoTable(&parser->oGotoStack);
+			PopSymbolTable(&parser->oSymbolStack);
+			PopVariableTable(&parser->oSymbolStack.oGlobalStack);
+			PopVariableTable(&parser->oSymbolStack.oDataSegment);
+		.)
+	) .
+
+	Statement =
+	(
+		(. 
+			CJcString oLabelName;
+			ResetPeek(parser->scanner); 
+		.)
+		{
+			IF(Get(parser)->kind==parser->_Identifier && PeekToken(parser->scanner)->kind == parser->_colon)
+			(.
+				InitializeString(&oLabelName);
+				AppendString(&oLabelName, Get(parser)->val);
+			.)
+			Identifier colon
+			(.
+				if(NewGotoLabel(&parser->oGotoStack, oLabelName.pStr, GetPosOfSegment(&parser->oSymbolStack.oCodeSegment)))
+					SetError(parser, 0, "redefine label '%s'", oLabelName.pStr);
+			.)
+		}
+		(
+			GotoStatement
+			| IfStatement
+			| SwitchStatement
+			| WhileStatement
+			| DoStatement
+			| ForStatement
+			| CompoundStatement
+			| ReturnStatement
+			| ContinueStatement
+			| BreakStatement
+			| ExpressionStatement
+		)
+	) .
+
+	CompoundStatement =
+	(
+		(. jc_uint nStackInsAddr, nStackSize, bShouldBeDeclaration, nHasType; .)
+		lbrace
+		(.
+			NewSymbolTable(&parser->oSymbolStack);
+			if(parser->pFunction){
+				SetFunction(&parser->oSymbolStack, parser->pFunction);
+				parser->pFunction = NULL;
+			}
+			if(parser->oSymbolStack.nLevel == 2){
+				NewGotoTable(&parser->oGotoStack);
+				nStackInsAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+				Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_newstk, (jc_uchar)JC_UN, 0, JC_DEFAULT_INSADDR);
+			}
+			if(parser->oSymbolStack.pInFunction)
+				NewVariableTable(&parser->oSymbolStack.oLocalStack);
+			else
+				NewVariableTable(&parser->oSymbolStack.oGlobalStack);
+		.)
+		{
+			(.
+				nHasType = 0;
+				bShouldBeDeclaration = 0;
+				if(IsTypeSpecifier(&parser->oSymbolStack, Get(parser)->kind, Get(parser)->val)){
+					nHasType = 1;
+					bShouldBeDeclaration = 1;
+				}
+				else{
+					CJcSymbol oSymbol;
+					CJcToken* pToken = Get(parser);
+					if(pToken->kind == parser->_Identifier && FindSymbol(&parser->oSymbolStack, pToken->val, 1, &oSymbol)){
+						pToken = PeekToken(parser->scanner);
+						if(pToken->kind == parser->_lparentheses){
+							pToken = PeekToken(parser->scanner);
+							if(IsTypeSpecifier(&parser->oSymbolStack, pToken->kind, pToken->val))
+								bShouldBeDeclaration = 1;
+							else if(pToken->kind == parser->_Identifier){
+								pToken = PeekToken(parser->scanner);
+								if(pToken->kind == parser->_Identifier)
+									bShouldBeDeclaration = 1;
+							}
+						}
+						ResetPeek(parser->scanner);
+					}
+				}
+			.)
+			( IF(bShouldBeDeclaration) Declaration<nHasType> | Statement )
+		}
+		rbrace
+		(.
+			if(parser->oSymbolStack.nLevel == 2){
+				CJcGotoFillError oError;
+				if(parser->oSymbolStack.pInFunction)
+					NewGotoLabel(&parser->oGotoStack, "$Ret", GetPosOfSegment(&parser->oSymbolStack.oCodeSegment));
+				while(BackFillGotoStack(&parser->oGotoStack, &parser->oSymbolStack.oCodeSegment, &oError))
+					SetErrorEx(parser, 0, oError.sFileName, oError.nLine, oError.nCol, "missing label '%s'", oError.sLabel);
+				PopGotoTable(&parser->oGotoStack);
+				if(parser->oSymbolStack.pInFunction)
+					nStackSize = GetSizeOfStack(&parser->oSymbolStack.oLocalStack);
+				else
+					nStackSize = GetSizeOfStack(&parser->oSymbolStack.oGlobalStack);
+				Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_newstk, (jc_uchar)JC_UN, nStackSize, nStackInsAddr);
+				Emit0(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_delstk, JC_DEFAULT_INSADDR);
+				if(parser->oSymbolStack.pInFunction)
+					Emit0(&parser->oSymbolStack.oCodeSegment, (jc_short)jc_ret, JC_DEFAULT_INSADDR);
+			}
+			if(parser->oSymbolStack.pInFunction)
+				PopVariableTable(&parser->oSymbolStack.oLocalStack);
+			else
+				PopVariableTable(&parser->oSymbolStack.oGlobalStack);
+			PopSymbolTable(&parser->oSymbolStack);
+		.)
+	) .
+
+	ExpressionStatement =
+	(
+		(.
+			CJcExpress oExp;
+			InitializeExpress(&parser->oSymbolStack, &oExp);
+		.)
+		[ Expression<&oExp, True> (. DestroyExpress(&oExp); .) ] scolon
+	) .
+
+	IfStatement =
+	(
+		(.
+			CJcExpress oExp;
+			jc_bool bNormalCond, bForce=False, bTrue;
+			jc_uint nIfInsAddr, nIfEndInsAddr;
+			jc_uint nElseSentAddr = 0, nIfEndSentAddr = 0;
+			InitializeExpress(&parser->oSymbolStack, &oExp);
+		.)
+		if lparentheses Expression<&oExp, True> (. bNormalCond = CheckCondExpress(&oExp); .) rparentheses
+		(.
+			if(bNormalCond && oExp.nOpt == JC_IS){
+				CJcVal oVal;
+				GetConstValue(&oExp, &oVal, GetTypeCode(GetOrigType(oExp.pType)), 1);
+				bForce = True;
+				bTrue = (oVal.ul?True:False);
+				if(!bTrue){
+					nIfInsAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+					Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_jmp, (jc_uchar)JC_UN, nElseSentAddr, JC_DEFAULT_INSADDR);
+				}
+			}
+			else{
+				nIfInsAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+				EmitCondJmp(&oExp, False, nElseSentAddr, JC_DEFAULT_INSADDR);
+			}
+		.)
+		Statement
+		(.
+			nElseSentAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+			if(!bForce)
+				EmitCondJmp(&oExp, False, nElseSentAddr, nIfInsAddr);
+			else if(!bTrue)
+				Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_jmp, (jc_uchar)JC_UN, nElseSentAddr, nIfInsAddr);
+			DestroyExpress(&oExp);
+		.)
+		[
+			else
+			(.
+				if(!bForce || bTrue){
+					nIfEndInsAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+					Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_jmp, (jc_uchar)JC_UN, nIfEndSentAddr, JC_DEFAULT_INSADDR);
+				}
+			.)
+			Statement
+			(.
+				if(!bForce || bTrue){
+					nIfEndSentAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+					Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_jmp, (jc_uchar)JC_UN, nIfEndSentAddr, nIfEndInsAddr);
+				}
+			.)
+		]
+	) .
+
+	SwitchStatement =
+	(
+		(.
+			CJcExpress oExp;
+			jc_uint nSwitchInsAddr, nSwitchTableAddr = 0, nSwitchEndAddr, nSwitchExpressType;
+			InitializeExpress(&parser->oSymbolStack, &oExp);
+		.)
+		switch lparentheses Expression<&oExp, True> (. CheckSwitchExpress(&oExp); .) rparentheses
+		(.
+			nSwitchInsAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+			EmitSwitchJmp(&oExp, nSwitchTableAddr, JC_DEFAULT_INSADDR);
+			NewBreakTable(&parser->oBreakStack);
+			nSwitchExpressType = GetTypeCode(GetOrigType(oExp.pType));
+			NewSwitchTable(&parser->oSwitchStack, nSwitchExpressType);
+		.)
+		lbrace CaseStatement<nSwitchExpressType> {CaseStatement<nSwitchExpressType>} rbrace
+		(.
+			nSwitchEndAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+			WriteDefault(&parser->oSwitchStack, nSwitchEndAddr, 1);
+			nSwitchTableAddr = BackFillSwitchStack(&parser->oSwitchStack, &parser->oSymbolStack.oConstSegment, &parser->oSymbolStack.oConstTable);
+			EmitSwitchJmp(&oExp, nSwitchTableAddr, nSwitchInsAddr);
+			BackFillBreakStack(&parser->oBreakStack, &parser->oSymbolStack.oCodeSegment, nSwitchEndAddr);
+			PopSwitchTable(&parser->oSwitchStack);
+			PopBreakTable(&parser->oBreakStack);
+			DestroyExpress(&oExp);
+		.)
+	) .
+
+	CaseStatement<jc_uint nSwitchExpressType> =
+	(
+		CaseLabel<nSwitchExpressType> { CaseLabel<nSwitchExpressType> }
+		Statement { Statement }
+	) .
+
+	CaseLabel<jc_uint nSwitchExpressType> =
+	(
+		(.
+			CJcExpress oExp;
+			jc_uint nError, nLabelAddr;
+			nLabelAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+			InitializeExpress(&parser->oSymbolStack, &oExp);
+		.)
+		(
+			(
+				default (. nError = WriteDefault(&parser->oSwitchStack, nLabelAddr, False); .)
+			)
+			|
+			(
+				case
+				Expression<&oExp, False>
+				(.
+					CheckCaseExpress(&oExp);
+					nError = WriteCase(&parser->oSwitchStack, &parser->oSymbolStack.oConstSegment,
+						&parser->oSymbolStack.oConstTable, nLabelAddr, &oExp, nSwitchExpressType);
+				.)
+			)
+		)
+		(.
+			if(nError)
+				SetError(parser, 0, "redefine case label");
+			DestroyExpress(&oExp);
+		.)
+		colon
+	) .
+
+	WhileStatement =
+	(
+		(.
+			CJcExpress oExp;
+			jc_uint nWhileInsAddr;
+			jc_uint nEndAddr = 0;
+			jc_bool bNormalCond, bForce=False, bTrue;
+			jc_uint nLoopAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+			InitializeExpress(&parser->oSymbolStack, &oExp);
+		.)
+		while lparentheses Expression<&oExp, True> (. bNormalCond = CheckCondExpress(&oExp); .) rparentheses
+		(.
+			if(bNormalCond && oExp.nOpt == JC_IS){
+				CJcVal oVal;
+				GetConstValue(&oExp, &oVal, GetTypeCode(GetOrigType(oExp.pType)), 1);
+				bForce = True;
+				bTrue = (oVal.ul?True:False);
+				if(!bTrue){
+					nWhileInsAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+					Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_jmp, (jc_uchar)JC_UN, nEndAddr, JC_DEFAULT_INSADDR);
+				}
+			}
+			else{
+				nWhileInsAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+				EmitCondJmp(&oExp, False, nEndAddr, JC_DEFAULT_INSADDR);
+			}
+			NewBreakTable(&parser->oBreakStack);
+			NewContinueTable(&parser->oContinueStack);
+		.)
+		Statement
+		(.
+			if(!bForce || bTrue)
+				Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_jmp, (jc_uchar)JC_UN, nLoopAddr, JC_DEFAULT_INSADDR);
+			nEndAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+			if(!bForce)
+				EmitCondJmp(&oExp, False, nEndAddr, nWhileInsAddr);
+			else if(!bTrue)
+				Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_jmp, (jc_uchar)JC_UN, nEndAddr, nWhileInsAddr);
+			BackFillBreakStack(&parser->oBreakStack, &parser->oSymbolStack.oCodeSegment, nEndAddr);
+			BackFillContinueStack(&parser->oContinueStack, &parser->oSymbolStack.oCodeSegment, nLoopAddr);
+			PopBreakTable(&parser->oBreakStack);
+			PopContinueTable(&parser->oContinueStack);
+			DestroyExpress(&oExp);
+		.)
+	).
+
+	DoStatement =
+	(
+		(.
+			CJcExpress oExp;
+			jc_uint nDoAddr, nLoopAddr, nEndAddr = 0;
+			jc_bool bNormalCond;
+			InitializeExpress(&parser->oSymbolStack, &oExp);
+		.)
+		do
+		(.
+			nDoAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+			NewBreakTable(&parser->oBreakStack);
+			NewContinueTable(&parser->oContinueStack);
+		.)
+		Statement (. nLoopAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment); .)
+		while lparentheses Expression<&oExp, True> (. bNormalCond = CheckCondExpress(&oExp); .) rparentheses scolon
+		(.
+			if(bNormalCond && oExp.nOpt == JC_IS){
+				CJcVal oVal;
+				GetConstValue(&oExp, &oVal, GetTypeCode(GetOrigType(oExp.pType)), 1);
+				if(oVal.ul)
+					Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_jmp, (jc_uchar)JC_UN, nDoAddr, JC_DEFAULT_INSADDR);
+			}
+			else
+				EmitCondJmp(&oExp, True, nDoAddr, JC_DEFAULT_INSADDR);
+			nEndAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+			BackFillBreakStack(&parser->oBreakStack, &parser->oSymbolStack.oCodeSegment, nEndAddr);
+			BackFillContinueStack(&parser->oContinueStack, &parser->oSymbolStack.oCodeSegment, nLoopAddr);
+			PopBreakTable(&parser->oBreakStack);
+			PopContinueTable(&parser->oContinueStack);
+			DestroyExpress(&oExp);
+		.)
+	) .
+
+	ForStatement =
+	(
+		(.
+			CJcToken* pToken;
+			CJcExpress oExp, oSubExp;
+			jc_uint nTestAddr, nEndAddr=0;
+			jc_uint nLoopAddr, nSentAddr = 0;
+			jc_uint nIfInsAddr, nElseInsAddr;
+			jc_bool bForce = False, bTrue, bNormalCond, bIsType = False;
+			InitializeExpress(&parser->oSymbolStack, &oExp);
+			InitializeExpress(&parser->oSymbolStack, &oSubExp);
+		.)
+		for
+		(.
+			NewSymbolTable(&parser->oSymbolStack);
+			if(parser->oSymbolStack.nLevel == 2)
+				NewGotoTable(&parser->oGotoStack);
+			if(parser->oSymbolStack.pInFunction)
+				NewVariableTable(&parser->oSymbolStack.oLocalStack);
+			else
+				NewVariableTable(&parser->oSymbolStack.oGlobalStack);
+		.)
+		lparentheses
+		(.
+			pToken = Get(parser);
+			bIsType = IsTypeSpecifier(&parser->oSymbolStack, pToken->kind, pToken->val);
+		.)
+		( IF(bIsType) ForInitializer | [ Expression<&oExp, True> ] )
+		scolon
+		(. nTestAddr = nLoopAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment); .)
+		[
+			Expression<&oExp, True>
+			(.
+				bNormalCond = CheckCondExpress(&oExp);
+				nIfInsAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+				if(bNormalCond && oExp.nOpt == JC_IS){
+					CJcVal oVal;
+					GetConstValue(&oExp, &oVal, GetTypeCode(GetOrigType(oExp.pType)), 1);
+					bTrue = (oVal.ul?True:False);
+					bForce = True;
+				}
+				else
+					EmitCondJmp(&oExp, True, nSentAddr, JC_DEFAULT_INSADDR);
+				nElseInsAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+				Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_jmp, (jc_uchar)JC_UN, nEndAddr, JC_DEFAULT_INSADDR);
+				nLoopAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+			.)
+		]
+		scolon
+		[
+			Expression<&oSubExp, True>
+			(.
+				if(nTestAddr != nLoopAddr)
+					Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_jmp, (jc_uchar)JC_UN, nTestAddr, JC_DEFAULT_INSADDR);
+			.)
+		]
+		rparentheses
+		(.
+			nSentAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+			if(nTestAddr != nLoopAddr){
+				if(bForce){
+					if(nSentAddr == nLoopAddr)
+						RollBackSegment(&parser->oSymbolStack.oCodeSegment, 8);
+					else
+						Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_jmp, (jc_uchar)JC_UN, nSentAddr, nElseInsAddr);
+				}
+				else
+					EmitCondJmp(&oExp, True, nSentAddr, nIfInsAddr);
+			}
+			NewBreakTable(&parser->oBreakStack);
+			NewContinueTable(&parser->oContinueStack);
+		.)
+		Statement
+		(.
+			Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_jmp, (jc_uchar)JC_UN, nLoopAddr, JC_DEFAULT_INSADDR);
+			nEndAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+			if(nTestAddr != nLoopAddr && (!bForce || !bTrue))
+				Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_jmp, (jc_uchar)JC_UN, nEndAddr, nElseInsAddr);
+			BackFillBreakStack(&parser->oBreakStack, &parser->oSymbolStack.oCodeSegment, nEndAddr);
+			BackFillContinueStack(&parser->oContinueStack, &parser->oSymbolStack.oCodeSegment, nLoopAddr);
+			PopBreakTable(&parser->oBreakStack);
+			PopContinueTable(&parser->oContinueStack);
+			if(parser->oSymbolStack.nLevel == 2)
+			{
+				CJcGotoFillError oError;
+				while(BackFillGotoStack(&parser->oGotoStack, &parser->oSymbolStack.oCodeSegment, &oError))
+					SetErrorEx(parser, 0, oError.sFileName, oError.nLine, oError.nCol, "missing label '%s'", oError.sLabel);
+				PopGotoTable(&parser->oGotoStack);
+			}
+			if(parser->oSymbolStack.pInFunction)
+				PopVariableTable(&parser->oSymbolStack.oLocalStack);
+			else
+				PopVariableTable(&parser->oSymbolStack.oGlobalStack);
+			PopSymbolTable(&parser->oSymbolStack);
+			DestroyExpress(&oExp);
+			DestroyExpress(&oSubExp);
+		.)
+	) .
+
+	GotoStatement =
+	(
+		goto Identifier
+		(.
+			CreateGoto(&parser->oGotoStack, GetPosOfSegment(&parser->oSymbolStack.oCodeSegment),
+				parser->t->fname, parser->t->val, parser->t->fline, parser->t->fcol);
+			Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_jmp, (jc_uchar)JC_UN, 0, JC_DEFAULT_INSADDR);
+		.)
+		 scolon
+	) .
+
+	ContinueStatement =
+	(
+		continue scolon
+		(.
+			if(CreateContinue(&parser->oContinueStack, GetPosOfSegment(&parser->oSymbolStack.oCodeSegment)))
+				SetError(parser, 0, "invalid continue statement");
+			else
+				Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_jmp, (jc_uchar)JC_UN, 0, JC_DEFAULT_INSADDR);
+		.)
+	) .
+
+	BreakStatement =
+	(
+		break scolon
+		(.
+			if(CreateBreak(&parser->oBreakStack, GetPosOfSegment(&parser->oSymbolStack.oCodeSegment)))
+				SetError(parser, 0, "invalid break statement");
+			else
+				Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_jmp, (jc_uchar)JC_UN, 0, JC_DEFAULT_INSADDR);
+		.)
+	) .
+
+	ReturnStatement =
+	(
+		(.
+			CJcExpress oExp;
+			jc_bool nHasReturnValue = False;
+			InitializeExpress(&parser->oSymbolStack, &oExp);
+		.)
+		return [ Expression<&oExp, True> (. nHasReturnValue = True; .) ] scolon
+		(.
+			if(!parser->oSymbolStack.pInFunction)
+				SetError(parser, 0, "invalid return statement");
+			else if(NeedReturnValue(&parser->oSymbolStack) != nHasReturnValue){
+				if(nHasReturnValue)
+					SetError(parser, 0, "return express is unexpected", Get(parser)->val);
+				else
+					SetError(parser, 0, "return express is expected", Get(parser)->val);
+			}
+			else{
+				if(nHasReturnValue)
+					ReturnExpress(&oExp);
+				CreateGoto(&parser->oGotoStack, GetPosOfSegment(&parser->oSymbolStack.oCodeSegment),
+					parser->t->fname, "$Ret", parser->t->fline, parser->t->fcol);
+				Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_jmp, (jc_uchar)JC_UN, 0, JC_DEFAULT_INSADDR);
+			}
+			DestroyExpress(&oExp);
+		.)
+	) .
+
+	Declaration< jc_uint nHasType > =
+	(
+		(.
+			CJcTypeInfo oType;
+			jc_uint nQual = JC_NONE, nStorage = JC_NONE;
+			jc_bool bAllowBody = True;
+			InitializeType(&oType, JC_NONE, JC_SIGNED_INT, NULL, NULL, NULL);
+		.)
+		[ StorageSpecifier<&nStorage, True> ]
+		[ QualSpecifier<&nQual> ]
+		(.
+			if(nQual || (nStorage && nStorage!=JC_TYPEDEF))
+				bAllowBody = False;
+		.)
+		[ IF(nHasType) TypeSpecifier<&nQual, &oType, bAllowBody> ]
+		(
+			IF(nQual || nStorage || !nHasType) ObjectsSpecifier<nStorage, &oType, True> |
+			scolon |
+			ObjectsSpecifier<nStorage, &oType, True>
+		)
+		(. ClearType(&oType); .)
+	) .
+
+	ForInitializer =
+	(
+		(.
+			CJcTypeInfo oType;
+			jc_uint nQual = JC_NONE, nStorage = JC_NONE;
+			InitializeType0(&oType);
+		.)
+		[ StorageSpecifier<&nStorage, False> ]
+		[ QualSpecifier<&nQual> ]
+		TypeSpecifier<&nQual, &oType, False>
+		ObjectsSpecifier<nStorage, &oType, False>
+		(. ClearType(&oType); .)
+	) .
+
+	StorageSpecifier<jc_uint* pStorage, jc_bool bAllowTypedef> =
+	(
+		share
+		(.
+			if(parser->oSymbolStack.nLevel == 1)
+				pStorage[0] = JC_SHARE;
+			else
+				SetError(parser, 0, "'share' can be only used in the global region");
+		.) |
+		typedef
+		(.
+			if(bAllowTypedef)
+				pStorage[0] = JC_TYPEDEF;
+			else
+				SetError(parser, 0, "here doesn't allow 'typedef'");
+		.) |
+		auto
+		(.
+			if(parser->oSymbolStack.nLevel>1)
+				pStorage[0] = JC_AUTO;
+			else
+				SetError(parser, 0, "'auto' can be only used in the local region");
+		.) |
+		register
+		(.
+			if(parser->oSymbolStack.nLevel>1)
+				pStorage[0] = JC_REGISTER;
+			else
+				SetError(parser, 0, "'register' can be only used in the local region");
+		.) |
+		static (. pStorage[0] = JC_STATIC; .) |
+		extern (. pStorage[0] = JC_EXTERN; .) [ host (. pStorage[0] |= JC_HOST; .) | share (. pStorage[0] |= JC_SHARE; .) ]
+	) .
+
+	QualSpecifier<jc_uint* pQual> =
+	(
+		ConstQualSpecifier<pQual> [VolatileQualSpecifier<pQual>]  |
+		VolatileQualSpecifier<pQual> [ConstQualSpecifier<pQual>]
+	) .
+
+	ConstQualSpecifier<jc_uint* pQual> =
+	(
+		const
+		(.
+			if(pQual[0] & JC_CONST)
+				SetError(parser, 0, "repeated const keyword");
+			else
+				pQual[0] |= JC_CONST;
+		.)
+	) .
+
+	VolatileQualSpecifier<jc_uint* pQual> =
+	(
+		volatile
+		(.
+			if(pQual[0] & JC_VOLATILE)
+				SetError(parser, 0, "repeated volatile keyword");
+			else
+				pQual[0] |= JC_VOLATILE;
+		.)
+	) .
+
+	TypeSpecifier<jc_uint* pQual, CJcTypeInfo * pType, jc_bool nAllowBody> =
+	(
+		(. *pQual = JC_NONE; .)
+		(
+			SimpleSpecifier<pQual, pType> |
+			StructSpecifier<pQual, pType, nAllowBody> |
+			EnumSpecifier<pQual, pType, nAllowBody>	|
+			UserTypeSpecifier<pQual, pType>
+		)
+		{ PointerTypeSpecifier<pType> }
+	) .
+
+	PointerTypeSpecifier<CJcTypeInfo * pType> =
+	(
+		(.
+			jc_uint nQual = JC_NONE;
+			CJcTypeInfo oTmpType;
+		.)
+		mul [ QualSpecifier<&nQual> ]
+		(.
+			InitializeType(&oTmpType, nQual, JC_POINTER, NULL, CloneType(pType), NULL);
+			ClearType(pType);
+			*pType = oTmpType;
+		.)
+	) .
+
+	UserTypeSpecifier<jc_uint* pQual, CJcTypeInfo* pType> =
+	(
+		(.
+			CJcSymbol oSymbol;
+			CJcTypeInfo* pOldType = NULL;
+		.)
+		Identifier
+		(.
+			if(!FindSymbol(&parser->oSymbolStack, parser->t->val, 1, &oSymbol)){
+				if(oSymbol.nSymbol == JC_TYPE_SYMBOL)
+					pOldType = oSymbol.info.pType;
+			}
+			if(!pOldType){
+				SetError(parser, 0, "invalid type symbol '%s'", parser->t->val);
+				return;
+			}
+		.)
+		[ QualSpecifier<pQual> ]
+		(.
+			pQual[0] |= GetQualCode(pOldType);
+			if(GetTypeCode(pOldType) == JC_ALIAS){
+				CoverType(pType, pOldType);
+				SetQualCode(pType, *pQual);
+			}
+			else{
+				ClearType(pType);
+				InitializeType(pType, pQual[0], JC_ALIAS, NULL, pOldType, NULL);
+			}
+		.)
+	) .
+
+	SimpleSpecifier<jc_uint* pQual, CJcTypeInfo* pType> =
+	(
+		(. jc_uint nType=JC_SIGNED_INT, bSigned = 1; .)
+		(
+			float (. nType = JC_FLOAT; .) |
+			double (. nType = JC_DOUBLE; .) |
+			void (. nType = JC_VOID; .) |
+			long (. nType = JC_SIGNED_LONG; .) [double (. nType = JC_DOUBLE; .) | int | long [int] ] |
+			(
+				signed (. bSigned = 1; nType = JC_SIGNED_INT; .) |
+				unsigned (. bSigned = 0; nType = JC_UNSIGNED_INT; .)
+			)
+			(
+				long [int | long [int] ] (. nType = (bSigned)?JC_SIGNED_LONG:JC_UNSIGNED_LONG; .) |
+				IntegerSpecifier<bSigned, &nType>
+			) |
+			IntegerSpecifier<bSigned, &nType>
+		)
+		[ QualSpecifier<pQual> ]
+		(.
+			ClearType(pType);
+			InitializeType(pType, *pQual, nType, NULL, NULL, NULL);
+		.)
+	) .
+
+	IntegerSpecifier<jc_uint bSigned, jc_uint* pType> =
+	(
+		char (. pType[0] = (bSigned)?JC_SIGNED_CHAR:JC_UNSIGNED_CHAR; .) |
+		short [int] (. pType[0] = (bSigned)?JC_SIGNED_SHORT:JC_UNSIGNED_SHORT; .) |
+		int (. pType[0] = (bSigned)?JC_SIGNED_INT:JC_UNSIGNED_INT; .)
+	) .
+
+	EnumSpecifier<jc_uint* pQual, CJcTypeInfo* pType, jc_bool nAllowBody> =
+	(
+		(.
+			jc_uint nError, nRet;
+			CJcString oFullName, oTypeName;
+			CJcEnumInfo oEnumInfo;
+			CJcSymbol oSymbol;
+			jc_bool bDefined = False, bHasName = False, bHasBody = False;
+			InitializeString(&oFullName);
+			InitializeString(&oTypeName);
+			oEnumInfo.nImplemented = 0;
+			oEnumInfo.nNextValue = 0;
+		.)
+		enum
+		(
+			IF(!nAllowBody) Identifier (. bHasName = True; .) |
+			[ Identifier (. bHasName = True; .) ]
+		)
+		(.
+			if(bHasName){
+				CoverString(&oTypeName, parser->t->val);
+				AppendString(&oFullName, "enum ");
+				AppendString(&oFullName, oTypeName.pStr);
+			}
+			if(!nAllowBody)
+				goto nobody;
+		.)
+		(
+			IF(!bHasName) EnumBodySpecifier<&oEnumInfo, oTypeName.pStr> (. bHasBody = True; .) |
+			[ EnumBodySpecifier<&oEnumInfo, oTypeName.pStr> (. bHasBody = True; .) ]
+		)
+		(.
+			if(bHasBody){
+				if(bHasName){
+					if(!FindSymbol(&parser->oSymbolStack, oFullName.pStr, 0, &oSymbol)){
+						CJcTypeInfo* pTmpType = oSymbol.info.pType;
+						if(EnumImplemented(GetEnumInfo(pTmpType)))
+							SetError(parser, 0, "redefine enum symbol '%s'", oTypeName.pStr);
+						else
+							*GetEnumInfo(pTmpType) = oEnumInfo;
+						ClearType(pType);
+						InitializeType(pType, *pQual, JC_ALIAS, oFullName.pStr, pTmpType, NULL);
+						bDefined = True;
+					}
+				}
+				if(!bDefined){
+					CJcTypeInfo * pTmpType = CreateType(*pQual, JC_ENUM, oTypeName.pStr, NULL, CloneEnumInfo(&oEnumInfo));
+					if(oTypeName.pStr){
+						if(!CreateTypeSymbol(&parser->oSymbolStack, oFullName.pStr, pTmpType))
+							SetError(parser, 0, "redefine enum symbol '%s'", oTypeName.pStr);
+						else{
+							pTmpType = CreateType(*pQual, JC_ALIAS, oFullName.pStr, pTmpType, NULL);
+							if(CreateTypeSymbol(&parser->oSymbolStack, oTypeName.pStr, pTmpType))
+								pTmpType = CloneType(pTmpType);
+						}
+					}
+					ClearType(pType);
+					*pType = *pTmpType;
+					g_oInterface.Free(pTmpType);
+				}
+			}
+			else{
+				nobody:
+				nError = 0;
+				nRet = FindSymbol(&parser->oSymbolStack, oFullName.pStr, 0, &oSymbol);
+				if(nRet){
+					nRet = FindSymbol(&parser->oSymbolStack, oTypeName.pStr, 0, &oSymbol);
+					if(!nRet){
+						nError = 1;
+						SetError(parser, 0, "redefine symbol '%s'", oTypeName.pStr);
+					}
+					else
+						nRet = FindSymbol(&parser->oSymbolStack, oFullName.pStr, 1, &oSymbol);
+				}
+				if(!nRet){
+					ClearType(pType);
+					InitializeType(pType, *pQual, JC_ALIAS, oFullName.pStr, oSymbol.info.pType, NULL);
+				}
+				else if(!nError){
+					CJcTypeInfo* pTmpType = CreateType(JC_NONE, JC_ENUM, oTypeName.pStr, NULL, CreateEnumInfo());
+					CreateTypeSymbol(&parser->oSymbolStack, oFullName.pStr, pTmpType);
+					pTmpType = CreateType(*pQual, JC_ALIAS, oFullName.pStr, pTmpType, NULL);
+					CreateTypeSymbol(&parser->oSymbolStack, oTypeName.pStr, pTmpType);
+					ClearType(pType);
+					*pType = *pTmpType;
+				}
+				else{
+					ClearType(pType);
+					InitializeType(pType, JC_NONE, JC_ENUM, oTypeName.pStr, NULL, CreateEnumInfo());
+				}
+			}
+			ClearString(&oFullName);
+			ClearString(&oTypeName);
+		.)
+	) .
+
+	EnumBodySpecifier<CJcEnumInfo* pEnumInfo, char* pEnumName> =
+	(
+		(. jc_bool bEnd = False; .)
+		lbrace
+		[
+			EnumMemberSpecifier<pEnumInfo, pEnumName>
+			{
+				comma
+				(
+					EnumMemberSpecifier<pEnumInfo, pEnumName> |
+					rbrace (. bEnd = True; .)
+				)
+			}
+		]
+		( IF(bEnd) (. ; .) | rbrace )
+		(. FinishEnumDefine(pEnumInfo); .)
+	) .
+
+	EnumMemberSpecifier<CJcEnumInfo* pEnumInfo, char* pEnumName> =
+	(
+		(.
+			CJcExpress oExp;
+			CJcString oConstName;
+			jc_int nLine, nCol, nNextValue;
+			jc_bool bHasError = False;
+			InitializeString(&oConstName);
+			InitializeExpress(&parser->oSymbolStack, &oExp);
+			nNextValue = GetNextEnumValue(pEnumInfo);
+		.)
+		Identifier
+		(.
+			CoverString(&oConstName, parser->t->val);
+			nLine = parser->t->line;
+			nCol = parser->t->col;
+		.)
+		[
+			assign Expression<&oExp, False>
+			(.
+				if(GetEnumValue(&oExp, &nNextValue)){
+					bHasError = True;
+					SetError(parser, 0, "invalid enum const");
+					nNextValue = GetNextEnumValue(pEnumInfo);
+				}
+			.)
+		]
+		(.
+			UseEnumValue(pEnumInfo, nNextValue);
+			if(!bHasError){
+				CJcSymbol* pSymbol;
+				CJcTypeInfo oEnumType;
+				InitializeType(&oEnumType, JC_NONE, JC_ENUM, pEnumName, NULL, CloneEnumInfo(pEnumInfo));
+				pSymbol = CreateEnumSymbol(&parser->oSymbolStack, oConstName.pStr, &oEnumType, nNextValue);
+				if(!pSymbol)
+					SetError(parser, 0, "redefine symbol '%s'", oConstName.pStr);
+				ClearType(&oEnumType);
+			}
+			DestroyExpress(&oExp);
+			ClearString(&oConstName);
+		.)
+	) .
+
+	StructSpecifier<jc_uint* pQual, CJcTypeInfo* pType, jc_bool nAllowBody> =
+	(
+		(.
+			jc_uint nError, nRet;
+			CJcSymbol oSymbol;
+			CJcStructInfo oStructInfo;
+			jc_uint nStructType;
+			CJcString oFullName, oTypeName, oStructName;
+			jc_bool bDefined = False, bHasName = False, bHasBody = False;
+			InitializeString(&oFullName);
+			InitializeString(&oTypeName);
+			InitializeString(&oStructName);
+			InitializeStructInfo(&oStructInfo);
+		.)
+		(
+			struct (. nStructType = JC_STRUCT; .) |
+			union (. nStructType = JC_UNION; .)
+		)
+		(. CoverString(&oStructName, parser->t->val); .)
+		(
+			IF(!nAllowBody) Identifier (. bHasName = True; .) |
+			[ Identifier (. bHasName = True; .) ]
+		)
+		(.
+			if(bHasName){
+				CoverString(&oTypeName, parser->t->val);
+				AppendString(&oFullName, oStructName.pStr);
+				AppendString(&oFullName, (jc_char*)" ");
+				AppendString(&oFullName, oTypeName.pStr);
+			}
+			if(!nAllowBody)
+				goto nobody;
+		.)
+		(
+			IF(!bHasName) StructBodySpecifier<nStructType, &oStructInfo> (. bHasBody = True; .) |
+			[ StructBodySpecifier<nStructType, &oStructInfo> (. bHasBody = True; .) ]
+		)
+		(.
+			if(bHasBody){
+				if(bHasName){
+					if(!FindSymbol(&parser->oSymbolStack, oFullName.pStr, 0, &oSymbol)){
+						CJcTypeInfo* pTmpType = oSymbol.info.pType;
+						if(StructImplemented(GetStructInfo(pTmpType)))
+							SetError(parser, 0, "redefine %s symbol '%s'", oStructName.pStr, oTypeName.pStr);
+						else{
+							CJcStructInfo* pDstInfo = GetStructInfo(pTmpType);
+							ClearStructInfo(pDstInfo);
+							*pDstInfo = oStructInfo;
+						}
+						ClearType(pType);
+						InitializeType(pType, *pQual, JC_ALIAS, oFullName.pStr, pTmpType, NULL);
+						bDefined = True;
+					}
+				}
+				if(!bDefined){
+					CJcTypeInfo * pTmpType;
+					CJcStructInfo* pStructInfo = New(CJcStructInfo);
+					*pStructInfo = oStructInfo;
+					pTmpType = CreateType(*pQual, nStructType, oTypeName.pStr, NULL, pStructInfo);
+					if(oTypeName.pStr){
+						if(!CreateTypeSymbol(&parser->oSymbolStack, oFullName.pStr, pTmpType))
+							SetError(parser, 0, "redefine %s symbol '%s'", oStructName.pStr, oTypeName.pStr);
+						else{
+							pTmpType = CreateType(*pQual, JC_ALIAS, oFullName.pStr, pTmpType, NULL);
+							if(CreateTypeSymbol(&parser->oSymbolStack, oTypeName.pStr, pTmpType))
+								pTmpType = CloneType(pTmpType);
+						}
+					}
+					ClearType(pType);
+					*pType = *pTmpType;
+					g_oInterface.Free(pTmpType);
+				}
+			}
+			else{
+				nobody:
+				nError = 0;
+				nRet = FindSymbol(&parser->oSymbolStack, oFullName.pStr, 0, &oSymbol);
+				if(nRet){
+					nRet = FindSymbol(&parser->oSymbolStack, oTypeName.pStr, 0, &oSymbol);
+					if(!nRet){
+						nError = 1;
+						SetError(parser, 0, "redefine symbol '%s'", oTypeName.pStr);
+					}
+					else
+						nRet = FindSymbol(&parser->oSymbolStack, oFullName.pStr, 1, &oSymbol);
+				}
+				if(!nRet){
+					ClearType(pType);
+					InitializeType(pType, *pQual, JC_ALIAS, oFullName.pStr, oSymbol.info.pType, NULL);
+				}
+				else if(!nError){
+					CJcTypeInfo* pTmpType = CreateType(JC_NONE, nStructType, oTypeName.pStr, NULL, CreateStructInfo());
+					CreateTypeSymbol(&parser->oSymbolStack, oFullName.pStr, pTmpType);
+					pTmpType = CreateType(*pQual, JC_ALIAS, oFullName.pStr, pTmpType, NULL);
+					CreateTypeSymbol(&parser->oSymbolStack, oTypeName.pStr, pTmpType);
+					CoverType(pType, pTmpType);
+				}
+				else{
+					ClearType(pType);
+					InitializeType(pType, JC_NONE, nStructType, oTypeName.pStr, NULL, CreateStructInfo());
+				}
+			}
+			ClearString(&oFullName);
+			ClearString(&oTypeName);
+			ClearString(&oStructName);
+		.)
+	) .
+
+	StructBodySpecifier<jc_uint nStructType, CJcStructInfo* pStructInfo> =
+	(
+		lbrace { StructMemberSpecifier<nStructType, pStructInfo> } rbrace
+		(. FinishStructDefine(pStructInfo); .)
+	) .
+
+	StructMemberSpecifier<jc_uint nStructType, CJcStructInfo* pStructInfo> =
+	(
+		(.
+			jc_uint nQual = JC_NONE;
+			CJcTypeInfo oFieldType;
+			InitializeType0(&oFieldType);
+		.)
+		TypeSpecifier<&nQual, &oFieldType, True>
+		FieldsSpecifier<&oFieldType, pStructInfo, nStructType>
+	) .
+
+	FieldsSpecifier<CJcTypeInfo* pFieldType, CJcStructInfo* pStructInfo, jc_uint nStructType> =
+	(
+		(. jc_bool bMeetEnd = False; .)
+		FieldsSpecifier2<pFieldType, pStructInfo, nStructType, &bMeetEnd, False>
+		{
+			IF(!bMeetEnd) FieldsSpecifier2<pFieldType, pStructInfo, nStructType, &bMeetEnd, True>
+		}
+	) .
+
+	FieldsSpecifier2<CJcTypeInfo* pFieldType, CJcStructInfo* pStructInfo, jc_uint nStructType, jc_bool* pMeetEnd, jc_bool bRemovePointer> =
+	(
+		(.
+			CJcString oName;
+			jc_int nRet, nBitCount = 0;
+			CJcExpress oExp;
+			CJcTypeInfo *pNewType = CloneType(pFieldType);
+			InitializeString(&oName);
+			InitializeExpress(&parser->oSymbolStack, &oExp);
+			if(bRemovePointer)
+				RemovePointer(pNewType);
+		.)
+		ObjectSpecifier<JC_NONE, &oName, pNewType, False>
+		[
+			colon Expression<&oExp, False>
+			(.
+				if(GetEnumValue(&oExp, &nBitCount))
+					SetError(parser, 0, "invalid bit field express");
+			.)
+		]
+		( comma | scolon (. *pMeetEnd = True; .) )
+		(.
+			nRet = AddStructField(pStructInfo, nStructType, oName.pStr, pNewType, (jc_uint)nBitCount);
+			if(nRet == 1)
+				SetError(parser, 0, "invalid field '%s' definition", oName.pStr);
+			else if(nRet == 2)
+				SetError(parser, 0, "redefine field '%s'", oName.pStr);
+			ClearString(&oName);
+			DestroyExpress(&oExp);
+		.)
+	) .
+
+	ObjectsSpecifier<jc_uint nStorage, CJcTypeInfo* pType, jc_bool bAllowFunctionDefine> =
+	(
+		(. jc_bool bMeetEnd=False; .)
+		ObjectsSpecifier2<nStorage, pType, bAllowFunctionDefine, &bMeetEnd, False>
+		{
+			IF(!bMeetEnd)
+			ObjectsSpecifier2<nStorage, pType, bAllowFunctionDefine, &bMeetEnd, True>
+		}
+	) .
+
+	ObjectsSpecifier2<jc_uint nStorage, CJcTypeInfo* pType, jc_bool bAllowFunctionDefine, jc_bool* pMeetEnd, jc_bool bRemovePointer> =
+	(
+		(.
+			CJcString oName;
+			CJcSymbol* pSymbol = NULL;
+			jc_bool bMustCommaOrScolon = False;
+			CJcTypeInfo *pTmpType, *pNewType = CloneType(pType);
+			InitializeString(&oName);
+			if(bRemovePointer)
+				RemovePointer(pNewType);
+		.)
+		ObjectSpecifier<nStorage, &oName, pNewType, True>
+		(.
+			pTmpType = CloneType(pNewType);
+			pSymbol = CreateSymbol(&parser->oSymbolStack, nStorage, oName.pStr, pTmpType);
+			if(!pSymbol){
+				DestroyType(pTmpType);
+			}
+			if(nStorage&JC_TYPEDEF)
+				bMustCommaOrScolon = True;
+			else if(GetTypeCode(pNewType)==JC_FUNCTION){
+				if(!bAllowFunctionDefine)
+					bMustCommaOrScolon = True;
+			}
+			else if(nStorage&JC_EXTERN)
+				bMustCommaOrScolon = True;
+		.)
+		(
+			IF(bMustCommaOrScolon) ( comma | scolon (. *pMeetEnd = True; .) ) |
+			comma | scolon (. *pMeetEnd = True; .) |
+			IF(GetTypeCode(pNewType)==JC_FUNCTION) FunctionDefine2<pSymbol> (. *pMeetEnd = True; .) |
+			InitializeVariable<pSymbol, pMeetEnd>
+		)
+		(.
+			ClearString(&oName);
+			DestroyType(pNewType);
+		.)
+	).
+
+	ObjectSpecifier<jc_uint nStorage, CJcString* pName, CJcTypeInfo* pType, jc_bool bAllowFunctionDeclare> =
+	(
+		(.
+			jc_bool bMeetFunction = False;
+			CJcTypeInfo* pOldType, oTmpType, *pTmp, *pPrev, *pPara;
+		.)
+		{ PointerTypeSpecifier<pType> }
+		(
+			lparentheses
+			(.
+				pOldType = CloneType(pType);
+				InitializeType(&oTmpType, JC_NONE, JC_ALIAS, NULL, pOldType, NULL);
+			.)
+			PointerTypeSpecifier<&oTmpType>
+			ObjectSpecifier<nStorage, pName, &oTmpType, bAllowFunctionDeclare>
+			(.
+				pPara = NULL;
+				pTmp = &oTmpType;
+				while(pTmp){
+					if(pTmp->pNext == pOldType){
+						pPrev->pNext = pOldType;
+						g_oInterface.Free(pTmp);
+						break;
+					}
+					if(pTmp->nType == JC_FUNCTION){
+						CJcFunctionInfo* pFunction = GetFunctionInfo(pTmp);
+						pTmp = GetFunctionType(pFunction);
+						if(GetTypeCode(GetOrigType(pTmp)) != JC_VOID)
+							pPara = GetFunctionPara(pFunction, 0)->pType;
+					}
+					else{
+						pPrev = pTmp;
+						pTmp = pTmp->pNext;
+					}
+				}
+				while(pPara){
+					if(pPara->pNext == pOldType){
+						g_oInterface.Free(pPara);
+						pPara = pPrev;
+						break;
+					}
+					pPrev = pPara;
+					pPara = pPara->pNext;
+				}
+				ClearType(pType);
+				*pType = oTmpType;
+			.)
+			rparentheses
+			(
+				FunctionDeclare<pOldType>|
+				ArrayDeclare<pOldType>
+			)
+			(.
+				if(pPara)
+					pPara->pNext = CloneType(pOldType);
+			.)
+			|
+			Identifier
+			(.
+				CoverString(pName, parser->t->val);
+				if(bAllowFunctionDeclare && !(nStorage&(JC_AUTO|JC_REGISTER)) ){
+					if(Get(parser)->kind == parser->_lparentheses)
+						bMeetFunction = True;
+				}
+			.)
+			(
+				IF(bMeetFunction) FunctionDeclare<pType> |
+				[ ArrayDeclare<pType> ]
+			)
+		)
+	) .
+
+	ArrayDeclare<CJcTypeInfo* pType> =
+	(
+		(.
+			jc_int i, nDim = 0, nCount=0;
+			CJcExpress oExp;
+			CJcTypeInfo oNewType;
+			InitializeExpress(&parser->oSymbolStack, &oExp);
+		.)
+		lbrack
+		[
+			Expression<&oExp, False>
+			(.
+				if(GetEnumValue(&oExp, &nDim))
+					SetError(parser, 0, "invalid array subscript express");
+				DestroyExpress(&oExp);
+			.)
+		]
+		rbrack
+		(.
+			InitializeType(&oNewType, JC_NONE, JC_ARRAY, NULL, CloneType(pType), CreateArrayInfo((jc_uint)nDim));
+			ClearType(pType);
+			*pType = oNewType;
+			++nCount;
+		.)
+		{
+			lbrack
+			Expression<&oExp, False>
+			(.
+				if(GetEnumValue(&oExp, &nDim) || !nDim)
+					SetError(parser, 0, "invalid array subscript express");
+				DestroyExpress(&oExp);
+			.)
+			rbrack
+			(.
+				InitializeType(&oNewType, JC_NONE, JC_ARRAY, NULL, CloneType(pType), CreateArrayInfo((jc_uint)nDim));
+				ClearType(pType);
+				*pType = oNewType;
+				++nCount;
+			.)
+		}
+		(.
+			if(nCount > 1){
+				CJcTypeInfo* pTmp, **pArray, *pLast;
+				pTmp = CloneType(pType);
+				ClearType(pType);
+				pArray = New2(CJcTypeInfo*, nCount);
+				for(i=0; i<nCount; ++i){
+					pArray[i] = pTmp;
+					pTmp = pTmp->pNext;
+				}
+				pTmp = pArray[nCount-1];
+				pLast = pTmp->pNext;
+				for(i=nCount-1; i>0; --i){
+					pArray[i]->pNext = pArray[i-1];
+				}
+				pArray[i]->pNext = pLast;
+				*pType = *pTmp;
+				g_oInterface.Free(pTmp);
+				g_oInterface.Free(pArray);
+			}
+		.)
+	) .
+
+	FunctionDeclare<CJcTypeInfo* pType> =
+	(
+		(.
+			jc_uint i=0, nQual;
+			jc_bool bEnd = False, bAddPara;
+			CJcString oParaName;
+			CJcTypeInfo oParaType;
+			CJcFunctionInfo* pFunction = CreateFunctionInfo(CloneType(pType));
+			ClearType(pType);
+			InitializeType(pType, JC_NONE, JC_FUNCTION, NULL, NULL, pFunction);
+			InitializeType0(&oParaType);
+			InitializeString(&oParaName);
+		.)
+		lparentheses
+		{
+			IF(!bEnd)
+			(.
+				nQual = JC_NONE;
+				bAddPara = True;
+			.)
+			(
+				comma (. bAddPara=False; continue; .) |
+				rparentheses (. bAddPara=False; bEnd=True; continue; .) |
+				ellipsis rparentheses (. CoverString(&oParaName, "..."); bEnd=True; .) |
+				[ register ]
+				[ QualSpecifier<&nQual> ]
+				TypeSpecifier<&nQual, &oParaType, False>
+				(.
+					if(!i && nQual == JC_NONE &&
+						GetTypeCode(GetOrigType(&oParaType)) == JC_VOID &&
+						Get(parser)->kind == parser->_rparentheses){
+						Accept(parser);
+						ClearType(&oParaType);
+						break;
+					}
+				.)
+				[ ParaSpecifier<&oParaName, &oParaType> ]
+			)
+			(.
+				if(bAddPara){
+					CJcTypeInfo* pParaType = CloneType(&oParaType);
+					jc_uint nRet = AddFunctionPara(pFunction, oParaName.pStr, pParaType);
+					if(nRet){
+						if(nRet == 1)
+							SetError(parser, 0, "invalid parameter '%s' definition", oParaName.pStr);
+						else
+							SetError(parser, 0, "redefine parameter '%s'", oParaName.pStr);
+						DestroyType(pParaType);
+					}
+				}
+				ClearType(&oParaType);
+				ClearString(&oParaName);
+				++i;
+			.)
+		}
+	) .
+
+	ParaSpecifier<CJcString* pName, CJcTypeInfo* pParaType> =
+	(
+		ObjectSpecifier<JC_NONE, pName, pParaType, False>
+	) .
+
+	FunctionDefine2<CJcSymbol* pSymbol> =
+	(
+		(.
+			jc_uint nEndAddr=0, nInsAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+			parser->pFunction = pSymbol->info.pFunction;
+			Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_jmp, (jc_uchar)JC_UN, nEndAddr, JC_DEFAULT_INSADDR);
+		.)
+		CompoundStatement
+		(.
+			nEndAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+			Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_jmp, (jc_uchar)JC_UN, nEndAddr, nInsAddr);
+			FunctionDefine(&parser->oSymbolStack, pSymbol, nInsAddr+8);
+		.)
+	) .
+
+	InitializeVariable<CJcSymbol* pSymbol, jc_bool* pMeetEnd> =
+	(
+		(. CJcVariableInfo* pVariable = pSymbol->info.pVariable; .)
+		assign InitializerExpr<pVariable>
+		( comma | scolon (. *pMeetEnd = True; .) )
+	) .
+
+	PrimaryExpr<CJcExpress* pExp> =
+	(
+		(. CJcSymbol oSymbol; .)
+		(
+			lparentheses Expression<pExp, True> rparentheses |
+			Identifier
+			(.
+				DestroyExpress(pExp);
+				if(FindSymbol(&parser->oSymbolStack, parser->t->val, 1, &oSymbol)){
+					SetError(parser, 0, "undefine symbol '%s'", parser->t->val);
+					*pExp = BuildIntegerConstantExpressA(&parser->oSymbolStack, 0, False);
+					return;
+				}
+				if(oSymbol.nSymbol == JC_TYPE_SYMBOL){
+					SetError(parser, 0, "the symbol '%s' is type, not express", parser->t->val);
+					*pExp = BuildIntegerConstantExpressA(&parser->oSymbolStack, 0, False);
+					return;
+				}
+				*pExp = BuildSymbolExpress(&parser->oSymbolStack, &oSymbol);
+			.) |
+			CharConst
+			(.
+				DestroyExpress(pExp);
+				*pExp = BuildCharConstantExpress(&parser->oSymbolStack, parser->t->val);
+			.) |
+			StringConst
+			(.
+				DestroyExpress(pExp);
+				*pExp = BuildStringConstantExpress(&parser->oSymbolStack, parser->t->val);
+			.) |
+			IntegerConst
+			(.
+				DestroyExpress(pExp);
+				*pExp = BuildIntegerConstantExpress(&parser->oSymbolStack, parser->t->val);
+			.) |
+			FloatConst
+			(.
+				DestroyExpress(pExp);
+				*pExp = BuildFloatConstantExpress(&parser->oSymbolStack, parser->t->val);
+			.)
+		)
+	) .
+
+	PostfixExpr<CJcExpress* pExp> =
+	(
+		(.
+			jc_uint i = 1, nArgInsAddr, nArgSize;
+			CJcExpress oArg;
+			InitializeExpress(&parser->oSymbolStack, &oArg);
+		.)
+		PrimaryExpr<pExp>
+		{
+			lbrack Expression<&oArg, True> rbrack (. BuildArrayExpress(pExp, &oArg); DestroyExpress(&oArg); .) |
+			lparentheses
+			(.
+				nArgInsAddr = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+				Emit1(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_newarg, (jc_uchar)JC_UN, 0, JC_DEFAULT_INSADDR);
+				nArgSize = 0;
+			.)
+			[
+				AssignmentExpr<&oArg>
+				(.
+					BuildArgumentExpress(pExp, &oArg, i, &nArgSize);
+					DestroyExpress(&oArg);
+					++i;
+				.)
+				{
+					comma AssignmentExpr<&oArg>
+					(.
+						BuildArgumentExpress(pExp, &oArg, i, &nArgSize);
+						DestroyExpress(&oArg);
+						++i;
+					.)
+				}
+			]
+			rparentheses (. BuildCallExpress(pExp, nArgSize, nArgInsAddr); .) |
+			dot Identifier (. BuildFieldExpress(pExp, parser->t->val, False); .) |
+			pointer Identifier (. BuildFieldExpress(pExp, parser->t->val, True); .) |
+			inc (. BuildIncreaseExpress(pExp, False, True); .) |
+			dec (. BuildIncreaseExpress(pExp, False, False); .)
+		}
+	) .
+
+	UnaryExpr<CJcExpress* pExp> =
+	(
+		(.
+			jc_uint nUnaryOperator;
+			jc_uint nQual;
+			CJcTypeInfo oType, *pType;
+			CJcExpress oNewExp;
+			CJcToken* pToken;
+			jc_uint bSizeOf;
+			jc_uint nPos = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+			InitializeType0(&oType);
+		.)
+		(
+			PostfixExpr<pExp> |
+			inc UnaryExpr<pExp> (. BuildIncreaseExpress(pExp, True, True); .) |
+			dec UnaryExpr<pExp> (. BuildIncreaseExpress(pExp, True, False); .) |
+			UnaryOperator<&nUnaryOperator> CastExpr<pExp> (. BuildUnaryExpress(pExp, nUnaryOperator); .) |
+			( (sizeof (. bSizeOf=1; .) ) | ("alignof" (. bSizeOf=0; .) ) ) (. ResetPeek(parser->scanner); .)
+			(
+				IF(parser->_lparentheses == Get(parser)->kind && (pToken=PeekToken(parser->scanner)) &&
+					IsTypeSpecifier(&parser->oSymbolStack, pToken->kind, pToken->val))
+				lparentheses TypeSpecifier<&nQual, &oType, False> rparentheses (. pType = &oType; .) |
+				UnaryExpr<pExp>
+				(.
+					pType = pExp->pType;
+					SetPosOfSegment(&parser->oSymbolStack.oCodeSegment, nPos);
+					CompactSegment(&parser->oSymbolStack.oCodeSegment);
+				.)
+			)
+			(.
+				oNewExp = BuildSizeExpress(&parser->oSymbolStack, pType, bSizeOf);
+				DestroyExpress(pExp);
+				*pExp = oNewExp;
+			.)
+		)
+		(.
+			ClearType(&oType);
+		.)
+	) .
+
+	UnaryOperator<jc_uint* pUnaryOperator> =
+	(
+		(and | mul | add | sub | tilde | not) (. *pUnaryOperator = parser->t->val[0]; .)
+	) .
+
+	CastExpr<CJcExpress* pExp> =
+	(
+		(.
+			jc_uint nQual;
+			CJcToken* pToken;
+			CJcTypeInfo oType;
+			InitializeType0(&oType);
+			nQual = JC_NONE;
+		.)		
+		(
+			IF(parser->_lparentheses == Get(parser)->kind &&
+				(pToken=PeekToken(parser->scanner)) &&
+				IsTypeSpecifier(&parser->oSymbolStack, pToken->kind, pToken->val)
+			  )
+			  lparentheses [ QualSpecifier<&nQual> ] TypeSpecifier<&nQual, &oType, False> rparentheses Expression<pExp, False> (. BuildCastExpress(pExp, &oType); .) |
+			UnaryExpr<pExp>
+		)
+		(. ClearType(&oType); .)
+	) .
+
+	MultiplicativeExpr<CJcExpress* pExp> =
+	(
+		(.
+			jc_uint nBinaryOp;
+			CJcExpress oSecondExp;
+			InitializeExpress(&parser->oSymbolStack, &oSecondExp);
+		.)
+		CastExpr<pExp>
+		{
+			(
+				mul (. nBinaryOp = JC_BINARY_MUL; .) |
+				div (. nBinaryOp = JC_BINARY_DIV; .) |
+				mod (. nBinaryOp = JC_BINARY_MOD; .)
+			)
+			CastExpr<&oSecondExp>
+			(.
+				BuildBinaryExpress(pExp, &oSecondExp, nBinaryOp);
+				DestroyExpress(&oSecondExp);
+			.)
+		}
+	) .
+
+	AdditiveExpr<CJcExpress* pExp> =
+	(
+		(.
+			jc_uint nBinaryOp;
+			CJcExpress oSecondExp;
+			InitializeExpress(&parser->oSymbolStack, &oSecondExp);
+		.)
+		MultiplicativeExpr<pExp>
+		{
+			(
+				add (. nBinaryOp = JC_BINARY_ADD; .) |
+				sub (. nBinaryOp = JC_BINARY_SUB; .)
+			)
+			MultiplicativeExpr<&oSecondExp>
+			(.
+				BuildBinaryExpress(pExp, &oSecondExp, nBinaryOp);
+				DestroyExpress(&oSecondExp);
+			.)
+		}
+	) .
+
+	ShiftExpr<CJcExpress* pExp> =
+	(
+		(.
+			jc_uint nBinaryOp;
+			CJcExpress oSecondExp;
+			InitializeExpress(&parser->oSymbolStack, &oSecondExp);
+		.)
+		AdditiveExpr<pExp>
+		{
+			(
+				lshift (. nBinaryOp = JC_BINARY_LSHIFT; .) |
+				rshift (. nBinaryOp = JC_BINARY_RSHIFT; .)
+			)
+			AdditiveExpr<&oSecondExp>
+			(.
+				BuildBinaryExpress(pExp, &oSecondExp, nBinaryOp);
+				DestroyExpress(&oSecondExp);
+			.)
+		}
+	) .
+
+	RelationalExpr<CJcExpress* pExp> =
+	(
+		(.
+			jc_uint nBinaryOp;
+			CJcExpress oSecondExp;
+			InitializeExpress(&parser->oSymbolStack, &oSecondExp);
+		.)
+		ShiftExpr<pExp>
+		{
+			(
+				lt (. nBinaryOp = JC_BINARY_LT; .) |
+				mt (. nBinaryOp = JC_BINARY_MT; .) |
+				lteq (. nBinaryOp = JC_BINARY_LE; .) |
+				mteq (. nBinaryOp = JC_BINARY_ME; .)
+			)
+			ShiftExpr<&oSecondExp>
+			(.
+				BuildBinaryExpress(pExp, &oSecondExp, nBinaryOp);
+				DestroyExpress(&oSecondExp);
+			.)
+		}
+	) .
+
+	EqualityExpr<CJcExpress* pExp> =
+	(
+		(.
+			jc_uint nBinaryOp;
+			CJcExpress oSecondExp;
+			InitializeExpress(&parser->oSymbolStack, &oSecondExp);
+		.)
+		RelationalExpr<pExp>
+		{
+			(
+				equal (. nBinaryOp = JC_BINARY_EQ; .) |
+				noteq (. nBinaryOp = JC_BINARY_NE; .)
+			)
+			RelationalExpr<&oSecondExp>
+			(.
+				BuildBinaryExpress(pExp, &oSecondExp, nBinaryOp);
+				DestroyExpress(&oSecondExp);
+			.)
+		}
+	) .
+
+	AndExpr<CJcExpress* pExp> =
+	(
+		(.
+			CJcExpress oSecondExp;
+			InitializeExpress(&parser->oSymbolStack, &oSecondExp);
+		.)
+		EqualityExpr<pExp>
+		{
+			and EqualityExpr<&oSecondExp>
+			(.
+				BuildBinaryExpress(pExp, &oSecondExp, JC_BINARY_BIT_AND);
+				DestroyExpress(&oSecondExp);
+			.)
+		}
+	) .
+
+	ExclusiveOrExpr<CJcExpress* pExp> =
+	(
+		(.
+			CJcExpress oSecondExp;
+			InitializeExpress(&parser->oSymbolStack, &oSecondExp);
+		.)
+		AndExpr<pExp>
+		{
+			xor AndExpr<&oSecondExp>
+			(.
+				BuildBinaryExpress(pExp, &oSecondExp, JC_BINARY_BIT_XOR);
+				DestroyExpress(&oSecondExp);
+			.)
+		}
+	) .
+
+	InclusiveOrExpr<CJcExpress* pExp> =
+	(
+		(.
+			CJcExpress oSecondExp;
+			InitializeExpress(&parser->oSymbolStack, &oSecondExp);
+		.)
+		ExclusiveOrExpr<pExp>
+		{
+			or ExclusiveOrExpr<&oSecondExp>
+			(.
+				BuildBinaryExpress(pExp, &oSecondExp, JC_BINARY_BIT_OR);
+				DestroyExpress(&oSecondExp);
+			.)
+		}
+	) .
+
+	LogicalAndExpr<CJcExpress* pExp> =
+	(
+		(.
+			CJcExpress oSecondExp;
+			InitializeExpress(&parser->oSymbolStack, &oSecondExp);
+		.)
+		InclusiveOrExpr<pExp>
+		{
+			land InclusiveOrExpr<&oSecondExp>
+			(.
+				BuildBinaryExpress(pExp, &oSecondExp, JC_BINARY_LOGIC_AND);
+				DestroyExpress(&oSecondExp);
+			.)
+		}
+	) .
+
+	LogicalOrExpr<CJcExpress* pExp> =
+	(
+		(.
+			CJcExpress oSecondExp;
+			InitializeExpress(&parser->oSymbolStack, &oSecondExp);
+		.)
+		LogicalAndExpr<pExp>
+		{
+			lor LogicalAndExpr<&oSecondExp>
+			(.
+				BuildBinaryExpress(pExp, &oSecondExp, JC_BINARY_LOGIC_OR);
+				DestroyExpress(&oSecondExp);
+			.)
+		}
+	) .
+
+	ConditionalExpr<CJcExpress* pExp> =
+	(
+		(.
+			CJcExpress oSecondExp, oThirdExp;
+			InitializeExpress(&parser->oSymbolStack, &oSecondExp);
+			InitializeExpress(&parser->oSymbolStack, &oThirdExp);
+		.)
+		LogicalOrExpr<pExp>
+		[
+			quest LogicalOrExpr<&oSecondExp> colon ConditionalExpr<&oThirdExp>
+			(.
+				BuildConditionalExpress(pExp, &oSecondExp, &oThirdExp);
+				DestroyExpress(&oSecondExp);
+				DestroyExpress(&oThirdExp);
+			.)
+		]
+	) .
+
+	AssignmentExpr<CJcExpress* pExp> =
+	(
+		(.
+			jc_uint nOperator;
+			CJcExpress oSecondExp;
+			InitializeExpress(&parser->oSymbolStack, &oSecondExp);
+		.)
+		ConditionalExpr<pExp>
+		{
+			(
+				assign (. nOperator = JC_ASSIGN_EQUAL; .) |
+				muleq (. nOperator = JC_ASSIGN_MUL_EQ; .) |
+				diveq (. nOperator = JC_ASSIGN_DIV_EQ; .) |
+				modeq (. nOperator = JC_ASSIGN_MOD_EQ; .) |
+				addeq (. nOperator = JC_ASSIGN_ADD_EQ; .) |
+				subeq (. nOperator = JC_ASSIGN_SUB_EQ; .) |
+				lshifteq (. nOperator = JC_ASSIGN_LSH_EQ; .) |
+				rshifteq (. nOperator = JC_ASSIGN_RSH_EQ; .) |
+				andeq (. nOperator = JC_ASSIGN_AND_EQ; .) |
+				xoreq (. nOperator = JC_ASSIGN_OR_EQ; .) |
+				oreq (. nOperator = JC_ASSIGN_XOR_EQ; .)
+			)
+			AssignmentExpr<&oSecondExp>
+			(.
+				BuildAssignmentExpress(pExp, &oSecondExp, nOperator, 1);
+				DestroyExpress(&oSecondExp);
+			.)
+		}
+	) .
+
+	Expression<CJcExpress* pExp, jc_bool bSupportComma> =
+	(
+		AssignmentExpr<pExp>
+		{
+			IF(bSupportComma && Get(parser)->kind == parser->_comma) comma AssignmentExpr<pExp> |
+			(. break; .)
+		}
+	) .
+
+	InitializerExpr<CJcVariableInfo* pVariable> =
+	(
+		(.
+			CJcExpress oExp;
+			jc_uint nControlVar;
+			jc_uint nControlPos, nControlEnd = 0;
+			jc_uint nOpt = pVariable->nOpt;
+			jc_uint nArg = pVariable->nArg;
+			CJcTypeInfo* pType = pVariable->pType;
+			InitializeExpress(&parser->oSymbolStack, &oExp);
+			oExp.pType = pVariable->pType;
+			oExp.nOpt = pVariable->nOpt;
+			oExp.nArg = pVariable->nArg;
+			oExp.nLeftValue = 1;
+			if(pVariable->nOpt == JC_DS && parser->oSymbolStack.pInFunction){
+				CJcExpress oLExp = BuildCharConstantExpress(&parser->oSymbolStack, "'1'");
+				CJcExpress oRExp = BuildCharConstantExpress(&parser->oSymbolStack, "'1'");
+				nControlVar = AllocVarInStack(&parser->oSymbolStack.oDataSegment, 1, 1, NULL);
+				nControlPos = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+				Emit2(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_jmptc, (jc_uchar)JC_DS, nControlVar, (jc_uchar)JC_UN, nControlEnd, JC_DEFAULT_INSADDR);
+				oLExp.nOpt = JC_DS;
+				oLExp.nArg = nControlVar;
+				oLExp.nLeftValue = 1;
+				SaveExpress(&oLExp, &oRExp);
+				DestroyExpress(&oLExp);
+				DestroyExpress(&oRExp);
+			}
+		.)
+		InitializeExpressA<&oExp>
+		(.
+			if(pVariable->nOpt == JC_DS && parser->oSymbolStack.pInFunction){
+				nControlEnd = GetPosOfSegment(&parser->oSymbolStack.oCodeSegment);
+				Emit2(&parser->oSymbolStack.oCodeSegment, (jc_ushort)jc_jmptc, (jc_uchar)JC_DS, nControlVar, (jc_uchar)JC_UN, nControlEnd, nControlPos);
+			}
+		.)
+	) .
+
+	InitializeExpressA<CJcExpress* pExp> =
+	(
+		(.
+			jc_uint nTypeCode;
+			CJcTypeInfo* pType;
+			CJcExpress oExp;
+			jc_uint nStringExp = 0;
+			pType = GetOrigType(pExp->pType);
+			nTypeCode = GetTypeCode(pType);
+			if(nTypeCode == JC_ARRAY && Get(parser)->kind == parser->_StringConst &&
+				(JC_CHAR & GetTypeCode(GetOrigType(GetNextType(pType)))))
+				nStringExp = 1;
+		.)
+		(
+			IF(nStringExp) InitializeStringExpress<pExp, GetArrayInfo(pType)> |
+			lbrace InitializeCompoundExpress<pExp, pType, nTypeCode> rbrace |
+			(. InitializeExpress(&parser->oSymbolStack, &oExp); .)
+			AssignmentExpr<&oExp>
+			(.
+				BuildAssignmentExpress(pExp, &oExp, JC_ASSIGN_EQUAL, 0);
+				DestroyExpress(&oExp);
+			.)
+		)
+	) .
+
+	InitializeCompoundExpress<CJcExpress* pExp, CJcTypeInfo* pType, jc_uint nTypeCode> =
+	(
+		(.
+			CJcExpress oExp;
+			CJcStructInfo* pStructInfo;
+			CJcStructFieldInfo* pField;
+			CJcArrayInfo* pArray;
+			CJcTypeInfo* pNext;
+			jc_uint nCode, nSize;
+			if(nTypeCode == JC_STRUCT || nTypeCode == JC_UNION){
+				pStructInfo = GetStructInfo(pType);
+				pField = pStructInfo->pHead;
+			}
+			if(nTypeCode == JC_ARRAY){
+				pArray = GetArrayInfo(pType);
+				pNext = GetOrigType(pType->pNext);
+				nCode = GetTypeCode(pNext);
+				nSize = pArray->nDim;
+			}
+		.)
+		(
+			IF(nTypeCode == JC_STRUCT || nTypeCode == JC_UNION) InitializeFieldListExpress<nTypeCode, pExp, pField> |
+			IF(nTypeCode == JC_ARRAY) InitializeArrayItemExpress<pExp, pArray, pNext, nSize, 0> |
+			(. InitializeExpress(&parser->oSymbolStack, &oExp); .)
+			AssignmentExpr<&oExp>
+			(.
+				BuildAssignmentExpress(pExp, &oExp, JC_ASSIGN_EQUAL, 0);
+				DestroyExpress(&oExp);
+			.)
+		)
+	).
+
+	InitializeFieldListExpress<jc_uint nTypeCode, CJcExpress* pStruct, CJcStructFieldInfo* pField> =
+	(
+		(.
+			CJcExpress oFieldExp;
+			jc_char* sName = pField->oName.pStr;
+			oFieldExp = *pStruct;
+			oFieldExp.pType = CloneType(oFieldExp.pType);
+			BuildFieldExpress(&oFieldExp, sName, 0);
+			if(!GetTypeSize(oFieldExp.pType))
+				SetError(parser, 0, "the zero length field '%s' cann't be initialized", sName);
+			pField = pField->pNext;
+		.)
+		InitializeExpressA<&oFieldExp>
+		(.
+			DestroyExpress(&oFieldExp);
+			if(nTypeCode != JC_STRUCT)
+				return;
+		.)
+		[
+			comma
+			(.
+				if(!pField){
+					SetError(parser, 0, "too many initialization item");
+					return;
+				}
+			.)
+			InitializeFieldListExpress<nTypeCode, pStruct, pField>
+		]
+	).
+
+	InitializeArrayItemExpress<CJcExpress* pExp, CJcArrayInfo* pArray, CJcTypeInfo* pItemType, jc_uint nDim, jc_uint nIdx> =
+	(
+		(.
+			CJcExpress oItemExp;
+			CJcExpress oIdxExp;
+			InitializeExpress(&parser->oSymbolStack, &oItemExp);
+			InitializeExpress(&parser->oSymbolStack, &oIdxExp);
+			if(!nDim){
+				jc_uint nAlign = GetTypeAlign(pItemType);
+				jc_uint nSize = GetTypeSize(pItemType);
+				CJcLocalStack* pStack;
+				if(pExp->nOpt == JC_DS || pExp->nOpt == JC_SS)
+					pStack = &parser->oSymbolStack.oDataSegment;
+				else if(!parser->oSymbolStack.pInFunction)
+					pStack = &parser->oSymbolStack.oGlobalStack;
+				else
+					pStack = &parser->oSymbolStack.oLocalStack;
+				AllocVarInStack(pStack, nSize, nAlign, NULL);
+				++pArray->nDim;
+			}
+			oItemExp = *pExp;
+			oItemExp.pType = CloneType(oItemExp.pType);
+			oIdxExp = BuildIntegerConstantExpressA(&parser->oSymbolStack, nIdx, False);
+			BuildArrayExpress(&oItemExp, &oIdxExp);
+			DestroyExpress(&oIdxExp);
+		.)
+		InitializeExpressA<&oItemExp> (. DestroyExpress(&oItemExp); .)
+		[ comma InitializeArrayItemExpress<pExp, pArray, pItemType, nDim, nIdx+1> ]
+	).
+
+	InitializeStringExpress<CJcExpress* pExp, CJcArrayInfo* pArray> =
+	(
+		(.
+			CJcStructFieldInfo* pField;
+			CJcStructInfo * pStruct;
+			CJcTypeInfo* pOldType;
+			CJcExpress oItemExp;
+			jc_uint nItemSize;
+			InitializeExpress(&parser->oSymbolStack, &oItemExp);
+		.)
+		AssignmentExpr<&oItemExp>
+		(.
+			nItemSize = GetTypeSize(oItemExp.pType);
+			if(!pArray->nDim){
+				CJcLocalStack* pStack;
+				if(pExp->nOpt==JC_DS || pExp->nOpt == JC_SS)
+					pStack = &parser->oSymbolStack.oDataSegment;
+				else if(!parser->oSymbolStack.pInFunction)
+					pStack = &parser->oSymbolStack.oGlobalStack;
+				else
+					pStack = &parser->oSymbolStack.oLocalStack;
+				AllocVarInStack(pStack, nItemSize, 1, NULL);
+				pArray->nDim = nItemSize;
+			}
+			else if(nItemSize > pArray->nDim){
+				nItemSize = pArray->nDim;
+				SetError(parser, 1, "initialization string too long");
+			}
+			pField = (CJcStructFieldInfo*)g_oInterface.Malloc(sizeof(CJcStructFieldInfo));
+			pField->pType = oItemExp.pType;
+			InitializeString(&pField->oName);
+			CoverString(&pField->oName, "???");
+			pField->nOffset = 0;
+			pField->nBitCount = 0;
+			pField->nBitOffset = 0;
+			pField->pNext = NULL;
+			pStruct = (CJcStructInfo*)g_oInterface.Malloc(sizeof(CJcStructInfo));
+			pStruct->nImplemented = 1;
+			pStruct->nSize = nItemSize;
+			pStruct->nAlign = 1;
+			pStruct->nFieldCount = 1;
+			pStruct->pHead = pStruct->pTail;
+			oItemExp.pType = CreateType(JC_NONE, JC_STRUCT, NULL, NULL, pStruct);
+			pOldType = pExp->pType;
+			pExp->pType = oItemExp.pType;
+			SaveExpress(pExp, &oItemExp);
+			pExp->pType = pOldType;
+			DestroyExpress(&oItemExp);
+		.)
+	).
+
+END Main .

@@ -1,0 +1,3 @@
+
+CJcVmInterface g_oInterface;
+

@@ -1,0 +1,264 @@
+
+-->begin
+#if !defined(_jc_parser_h_)
+#define _jc_parser_h_
+-->headerdef
+#include "jc_scanner.h"
+#include "jc_error.h"
+
+typedef struct CJcParser{
+-->constantsheader
+	int errDist;
+	int minErrDist;
+	CJcScanner *scanner;
+	CJcErrorSystem* pErrorSystem;
+	CJcToken *t;			/* last recognized token */
+	CJcToken *la;			/* lookahead token */
+-->declarations
+}CJcParser;
+
+void InitializeParser(CJcParser* parser, CJcScanner *scanner, CJcErrorSystem *pErrorSystem, int argc, char* argv[]);
+void DestroyParser(CJcParser* parser);
+void SetError(CJcParser* parser, int bWarning, const char* msg, ...);
+void SetErrorEx(CJcParser* parser, int bWarning, char* fname, int line, int col, const char *msg, ...);
+void Parse(CJcParser* parser);
+CJcToken* Get(CJcParser* parser);
+
+#endif
+
+-->implementation
+-->begin
+#include "jc_parser.h"
+
+static int TestOption(int argc, char* argv[], const char* sOpt);
+static void ReportSynErr(CJcParser* parser, char* fname, int line, int col, int n);
+static void ReportSemErr(CJcParser* parser, int bWarning, char* fname, int line, int col, const char *s);
+static void ReportSemErr2(CJcParser* parser, int bWarning, const char *s);
+static void SynErr(CJcParser* parser, int n);
+static void Accept(CJcParser* parser);
+static void Expect(CJcParser* parser, int n);
+static int StartOf(CJcParser* parser, int s);
+static void ExpectWeak(CJcParser* parser, int n, int follow);
+static int WeakSeparator(CJcParser* parser, int n, int syFol, int repFol);
+
+-->productionsheader
+static jc_bool TestOption(int argc, char* argv[], const char* sOpt)
+{
+	jc_int i;
+	for(i=1; i<argc; ++i)
+	{
+		if(!StringCompare(argv[i], sOpt))
+			return True;
+	}
+	return False;
+}
+
+static void Accept(CJcParser* parser){
+	if(parser->la){
+		parser->t = parser->la;
+		parser->la = NULL;
+	}
+}
+
+CJcToken* Get(CJcParser* parser){
+	if(parser->la)
+		return parser->la;
+	for(;;){
+		parser->la = ScanToken(parser->scanner);
+		if(parser->la->kind == parser->maxT){
+			SetError(parser, 0, "invalid token '%s'", parser->la->val);
+			continue;
+		}
+		if (parser->la->kind < parser->maxT){
+			++parser->errDist;
+			break;
+		}
+-->pragmas
+	}
+-->OnGetToken
+	return parser->la;
+}
+-->productions
+void Parse(CJcParser* parser){
+	BeginScan(parser->scanner);
+	parser->t = NULL;
+	parser->la = NULL;
+-->parseRoot
+	Expect(parser, 0);
+}
+
+void InitializeParser(CJcParser* parser, CJcScanner *scanner, CJcErrorSystem *pErrorSystem, int argc, char* argv[]){
+-->constants
+	parser->pErrorSystem = pErrorSystem;
+	parser->errDist = parser->minErrDist = 2;
+	parser->scanner = scanner;
+-->OnInitializeParser
+}
+
+static int StartOf(CJcParser* parser, int s){
+#define T 1
+#define x 0
+-->initialization
+#undef T
+#undef x
+	return set[s][Get(parser)->kind];
+}
+
+static void ReportSynErr(CJcParser* parser, char* fname, int line, int col, int n){
+	char* s;
+	switch(n){
+-->errors
+		default:{
+			char format[20];
+			g_oInterface.FormatPrint(format, "error %d", n);
+			s = format;
+		}
+		break;
+	}
+	ReportSemErr(parser, 0, fname, line, col, s);
+}
+
+static void ReportSemErr(CJcParser* parser, int bWarning, char* fname, int line, int col, const char *s){
+	CompileError(parser->pErrorSystem, bWarning, "%s[%d:%d]: %s\n", fname, line, col, s);
+}
+
+static void ReportSemErr2(CJcParser* parser, int bWarning, const char *s){
+	CompileError(parser->pErrorSystem, bWarning, "%s[%d:%d]: %s\n", parser->t->fname, parser->t->fline, parser->t->fcol, s);
+}
+
+static void SynErr(CJcParser* parser, int n){
+	if(parser->errDist >= parser->minErrDist){
+		ReportSynErr(parser, Get(parser)->fname, Get(parser)->fline, Get(parser)->fcol, n);
+	}
+	parser->errDist = 0;
+}
+
+static void Expect(CJcParser* parser, int n){
+	if(Get(parser)->kind == n)
+		Accept(parser);
+	else
+		SynErr(parser, n);
+}
+
+static void ExpectWeak(CJcParser* parser, int n, int follow){
+	if(Get(parser)->kind == n)
+		Accept(parser);
+	else{
+		SynErr(parser, n);
+		while(!StartOf(parser, follow))
+			Accept(parser);
+	}
+}
+
+static int WeakSeparator(CJcParser* parser, int n, int syFol, int repFol){
+	if(Get(parser)->kind == n)	{
+		Accept(parser);
+		return 1;
+	}
+	else if(StartOf(parser, repFol))
+		return 0;
+	SynErr(parser, n);
+	while(!(StartOf(parser, syFol) || StartOf(parser, repFol) || StartOf(parser, 0)))
+		Accept(parser);
+	return StartOf(parser, syFol);
+}
+
+void DestroyParser(CJcParser* parser){
+-->OnDestroyParser
+}
+
+void SetError(CJcParser* parser, int bWarning, const char* msg, ...)
+{
+	va_list argptr;
+	jc_char sError[1024];
+#ifdef UNIX
+	va_start(argptr);
+#else
+	va_start(argptr, msg);
+#endif
+	g_oInterface.FormatPrintV(sError, msg, argptr);
+	va_end(argptr);
+
+	if(bWarning)
+		ReportSemErr2(parser, bWarning, sError);
+	else{
+		if(parser->errDist >= parser->minErrDist)
+			ReportSemErr2(parser, bWarning, sError);
+		parser->errDist = 0;
+	}
+}
+
+void SetErrorEx(CJcParser* parser, int bWarning, char* fname, int line, int col, const char *msg, ...)
+{
+	va_list argptr;
+	jc_char sError[1024];
+#ifdef UNIX
+	va_start(argptr);
+#else
+	va_start(argptr, msg);
+#endif
+	g_oInterface.FormatPrintV(sError, msg, argptr);
+	va_end(argptr);
+
+	if(bWarning){
+		ReportSemErr(parser, bWarning, fname, line, col, sError);
+	}
+	else{
+		if(parser->errDist >= parser->minErrDist)
+			ReportSemErr(parser, bWarning, fname, line, col, sError);
+		parser->errDist = 0;
+	}
+}
+
+jc_bool IsTypeSpecifier(CJcSymbolStack* pStack, jc_int kind, jc_char* v)
+{
+	CJcSymbol oSymbol;
+	if(kind == pStack->pParser->_Identifier && !FindSymbol(pStack, v, 1, &oSymbol) && oSymbol.nSymbol == JC_TYPE_SYMBOL)
+		return True;
+	if(kind == pStack->pParser->_void)
+		return True;
+	if(kind == pStack->pParser->_char)
+		return True;
+	if(kind == pStack->pParser->_short)
+		return True;
+	if(kind == pStack->pParser->_int)
+		return True;
+	if(kind == pStack->pParser->_long)
+		return True;
+	if(kind == pStack->pParser->_signed)
+		return True;
+	if(kind == pStack->pParser->_unsigned)
+		return True;
+	if(kind == pStack->pParser->_float)
+		return True;
+	if(kind == pStack->pParser->_double)
+		return True;
+	if(kind == pStack->pParser->_struct)
+		return True;
+	if(kind == pStack->pParser->_union)
+		return True;
+	if(kind == pStack->pParser->_enum)
+		return True;
+	if(kind == pStack->pParser->_const)
+		return True;
+	if(kind == pStack->pParser->_volatile)
+		return True;
+	if(kind == pStack->pParser->_extern)
+		return True;
+	if(kind == pStack->pParser->_share)
+		return True;
+	if(kind == pStack->pParser->_typedef)
+		return True;
+	if(kind == pStack->pParser->_register)
+		return True;
+	if(kind == pStack->pParser->_static)
+		return True;
+	return False;
+}
+
+jc_bool NeedReturnValue(CJcSymbolStack* pStack)
+{
+	return (GetTypeCode(GetOrigType(GetFunctionType(pStack->pInFunction))) != JC_VOID);
+}
+
+$$$

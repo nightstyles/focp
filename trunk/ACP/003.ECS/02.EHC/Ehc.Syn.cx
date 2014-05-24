@@ -1,0 +1,1248 @@
+
+/******************************************************************************
+ * C语言语法概要
+ *
+ * 1.文件规范：
+ *	(1)字符集: 支持多字符集格式的文件，对于Unicode，仅支持UTF8格式的文件。对于文件中的
+ * 字符，按如下处理规则：
+ *	(A)ASCII字符：32~126，标准美国国标的单字节可显示字符。
+ *	(B)128~255，定义为多字节字符（以支持多语言编程）。
+ *	(C)0~125,127特殊字符的处理：
+ *		(a)0 -> 文件结束
+ *		(b)9 -> 水平制表
+ *		(c)10-> 换行
+ *		(d)11-> 垂直制表
+ *		(e)12-> 换页
+ *		(f)13-> 回车
+ *		解析文件时，其它特殊字符将被丢弃
+ *	文件的开始三个字节如果为EFBBBF，则表示为UTF8文件，这三个字节被丢弃。
+ * 10~13均起换行作用，并统一返回10，回车和换行连续出现时，丢弃回车符。
+ *	这样，任何文件都是合法文件。
+ *	(2)续行
+ *		反斜杠后跟一个换行符，表示续行，但不影响行号。(所以行号不一定连续)
+ *	(3)三字符组定义：
+ *	??(	替换成	[
+ *	??)	替换成	]
+ *	??<	替换成	{
+ *	??>	替换成	}
+ *	??/	替换成	\
+ *	??!	替换成	|
+ *	??'	替换成	^
+ *	??-	替换成	~
+ *	??=	替换成	#
+ *	(4)C替代性拼写(在三字符组处理后再进行的处理):
+ *	<%	替换成	{
+ *	%>	替换成	}
+ *	<:	替换成	[
+ *	:>	替换成	]
+ *	%:	替换成	#
+ *	%:%	替换成	##
+ *
+ * 2.预处理规范
+ *	预处理文件 := {预处理组}
+ *	预处理组 := [预处理记号] 换行 | if部分 | 控制行
+ *	if部分 := if组 {elif组} [else组] endif行
+ *	if组 :=  '#' if 常量表达式 换行 {预处理组} |
+ *		 '#' ifdef 标识符 换行 {预处理组} |
+ *		 '#' ifndef 标识符 换行 {预处理组}
+ *	elif组 := '#' elif 常量表达式 换行 {预处理组}
+ *	else组 := '#' else 换行 {预处理组}
+ *	endif行 := '#' endif 换行
+ *	控制行 := '#' include 预处理记号 换行 |
+ *		  '#' define 标识符 [([标识符列表])]替换列表 换行 |
+ *		  '#' undef 标识符 换行 |
+ *		  '#' line 预处理记号 换行 |
+ *		  '#' error [预处理记号] 换行 |
+ *		  '#' pragma [预处理记号] 换行 |
+ *		  '#' 换行
+ *	替换列表 := {预处理记号}
+ *	预处理记号 := 头文件名 | 标识符 | 预处理数 | 字符常量 | 字符串常量 | 预处理运算符 | 标点符号 | 其它非空白字符
+ *	头文件名 := '<' h字符 {h字符} '>' | '"' q字符 {q字符} '"'
+ *	h字符 := 除换行符和>外的任何字符
+ *	q字符 := 除换行符和"外的任何字符
+ *	预处理数 := [ '.' 数字 {数字|非数字|('e'|'E')('+'|'-')|} //数不合法也没关系，但是参与预处理运算时必须正确
+ *	预处理运算符 := '#' | '##' | '+' | '-' | '*' | '/' | '%' | '&' | '|' | '^' |
+ *			'&&' | '||' | '!' | '~' | '<<' | '>>' | '<' | '<=' | '==' | 
+ *			'!=' | '>=' | '>' | '?='
+ *		预处理运算仅针对整型常量进行运算（不包括枚举量, sizeof等）
+ *	本规范不支持变参宏
+ *
+ * 3.词法规范：
+ *	(1)标识符: 由下划线或字母开头，后跟任意多个数字或字母或下划线。
+ * 这里的字母包括多字节编码的非ASCII字母
+ *	(2)关键字：auto, bool, break, case, char, const, continue, default, do,
+ * double, else, enum, extern, false, float, for, goto, if, inline, int, long, register,
+ * return, short, signed, sizeof, static, struct, switch, typedef, union, restrict
+ * unsigned, void, volatile, while, share, host, true
+ *	其中bool,share,host,true,false是本系统为嵌入式特定的关键字。对于每一个关键字均可以
+ * 定义相应的多字节编码候选名称，以便支持多国语言编程，例如可以定义if的候选关键字
+ * 为"如果"、"假如"、"要是"、"因为"等，同时可以指定是否关闭标准关键字。
+ *	(3)操作符定义：
+ *	! % ^ & * - + = ~ . < > / ? += -= *= /= %= <<= >>= &= ^= |= -> ++ --
+ *	<< >> <= >= == != && || ( ) [ ] { } , ; : ...
+ *	(4)整数常量 := (十进制常量 [整数后缀]) | (八进制常量 [整数后缀]) | (十六进制常量 [整数后缀])
+ *	   十进制常量 := 非0数字 {十进制数字}
+ *	   八进制常量 := '0' {八进制数字}
+ *	   十六进制常量 := ('0x' | '0X') 十六进制数字 {十六进制数字}
+ *	   非0数字 := '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9'
+ *	   十进制数字 := '0' | 非0数字
+ *	   八进制数字 := '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7'
+ *	   十六进制数字 := 十进制数字 | 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'a' | 'b' | 'c' | 'd' | 'e' | 'f'
+ *	   整数后缀 := (类型后缀 [无符号后缀]) | (无符号后缀 [类型后缀])
+ *		 类型后缀 := 'l' | 'll' | 'L' | 'LL' | i8, i16, i32, i64 
+ *		 无符号后缀 := 'u' | 'U'
+ *	   char为8位，short为16位，int为32位，long为64位。无后缀时根据数值范围决定其类型（但至少为int）。
+ *	(4)浮点常量 := 十进制浮点常量 | 十六进制浮点常量
+ *		十进制浮点常量 := (十进制数字串 十进制指数 [浮点后缀]) | ((十进制数字串 '.' [十进制数字串] | '.' 十进制数字串) [十进制指数] [浮点后缀])
+ *		十六进制浮点常量 := ('0x' | '0X') (十六进制数字串 ['.' [十六进制数字串]] | '.' 十六进制数字串) 二进制指数 [浮点后缀]
+ *		十进制数字串 := 十进制数字 {十进制数字}
+ *		十六进制数字串 := 十六进制数字 {十六进制数字}
+ *		十进制指数 := ('e' | 'E') ['+' | '-'] 十进制数字串
+ *		二进制指数 := ('p' | 'P') ['+' | '-'] 十进制数字串
+ *		浮点后缀 := 'f' | 'F' | 'l' | 'L' 
+ *		浮点后缀用于指定是float还是double类型，缺省为double类型，本实现不支持long double(视同double).
+ *		本实现暂不支持16进制浮点数。
+ *	(5)字符常量 := "'" 字符 "'"
+ *		字符 := 除单引号,反斜杠,换行符外的源字符 | 转义字符 //因为有转义才会有多个字符
+ *		转义字符: 
+ *			\a  警告		\v	垂直制表
+ *			\b  退格		\\	反斜杠
+ *			\f  换页		\'	单引号
+ *			\n  换行		\"	双引号
+ *			\r  回车		\?	问号
+ *			\t  水平制表		
+ *			\八进制数字[八进制数字 [八进制数字]]	八进制转义字符
+ *			\x十六进制数字[十六进制数字]		十六进制转义字符
+ *		字符常量的数据类型是int
+ *	(6)字符串常量 := '"' {串字符} '"'
+ *		串字符 := 除双引号,反斜杠,换行符外的源字符 | 转义字符
+ *		字符串常量的数据类型是常量字符数组
+ *
+ * 4.语法规范：
+ *	(1)文法 := {顶层申明 | 语句} //传统C语言只有外部申明，没有语句，这里允许语句是为了实现shell脚本的能力
+ *	(2)顶层申明 := 申明规格 (申明器 ( 函数定义 | [ '=' 初始化器 ] {',' 初始化申明器} ';' ) | ';')
+ *		函数定义 := {申明} 复合语句
+ *		申明 := 申明子 ';'
+ *		FOR申明 := 申明子 {',' 申明子}
+ *		申明子 := 申明规格 初始化申明器 {',' 初始化申明器}
+ *		初始化申明器 := 申明器 ['=' 初始化器]
+ *		申明规格 := [存储规格] 类型及修饰
+ *		类型及修饰 := [修饰规格] 类型规格 [修饰规格]
+ *		存储规格 := typedef | extern | static | auto | register | inline | share | host
+ *		修饰规格 := const [volatile [restrict] | restrict [volatile] ] | 
+ *			    volatile [const [restrict] | restrict [const] ] | 
+ *			    restrict [const [volatile] | volatile [const] ]
+ *		类型规格 := void | bool | float | double | 整型规格 | 符号规格 | 结构规格 | 枚举规格
+ *		整型规格 := char | short [int] | long [double | long [double | int] ] | int | 类型别名
+ *		符号规格 := (signed | unsigned) [整型规格]
+ *		类型别名 := 标识符 //和'符号规格'搭配时，需要从语义上分析是否合法。
+ *		结构规格 := (struct | union) (标识符 ['{' {结构申明}'}'] | '{' {结构申明}'}')
+ *		枚举规格 := enum (标识符 ['{' 枚举器 {',' 枚举器} '}'] | '{' 枚举器 {',' 枚举器} '}' )
+ *		结构申明 := 类型及修饰 结构申明器 {',' 结构申明器} ';'
+ *		结构申明器 := 成员申明器 [':' 常量表达式] | ':'  常量表达式
+ *		枚举器 := 标识符 ['=' 常量表达式]
+ *		申明器 :=     [指针] (  标识符  [数组申明器  | 函数申明器] | '(' 指针 申明器 ')' (数组申明器 | 函数申明器) )
+ *		成员申明器 := [指针] (  标识符  [数组申明器]               | '(' 指针 成员申明器 ')' (数组申明器 | 函数申明器) )
+ *		参数申明器 := [指针] ( [标识符] [数组申明器]               | '(' 指针 参数申明器 ')' (数组申明器 | 函数申明器) )
+ *		类型申明器 := [指针] [ 数组申明器                          | '(' 指针 类型申明器 ')' (数组申明器 | 函数申明器) ]
+ *		数组申明器 := '[' [常量表达式] ']'
+ *		函数申明器 := '(' [标识符列表 | 形参列表] ')'
+ *		指针 := '*' [修饰规格] {'*' [修饰规格] }
+ *		标识符列表 := 标识符 {',' 标识符}
+ *		形参列表 := 参数申明 {',' 参数申明} [',' "..."]
+ *		参数申明 := 类型及修饰 参数申明器
+ *		初始化器 := 赋值表达式 | '{' 初始化器 {',' 初始化器} [','] '}'
+ *	(3)语句 := 标签语句 | case语句 | default语句 | 表达式语句 | 
+ *		   if语句 | switch语句 | while语句 | do语句 | for语句 |
+ *		   goto语句 | continue语句 | break语句 | return语句 | 复合语句
+ *		标签语句 := 标识符 ':'
+ *		case语句 := case 表达式 ':'
+ *		default语句 := default ':'
+ *		if语句 := if '('表达式')' 语句 [else 语句]
+ *		switch语句 := switch(表达式) 复合语句
+ *		while语句 := while '('表达式')' 语句
+ *		do语句 := do 复合语句 while '('表达式')' ';'
+ *		for语句 := for '(' [表达式|FOR申明] ';' [表达式] ';' [表达式] ')' 语句
+ *		goto语句 := goto ';'
+ *		continue语句 := continue ';'
+ *		break语句 := break ';'
+ *		return语句 := return [表达式] ';'
+ *		复合语句 := '{' {声明 | 语句} '}'
+ *		表达式语句 := [表达式] ';'
+ *	(4)表达式 := 赋值表达式 {',' 赋值表达式}
+ *		赋值表达式 := 条件表达式 [赋值操作 赋值表达式]
+ *		条件表达式 := 逻辑或表达式 ['?' 表达式 ':' 条件表达式]
+ *		逻辑或表达式 := 逻辑与表达式 {'||' 逻辑与表达式}
+ *		逻辑与表达式 := 位或表达式 {'&&' 位或表达式}
+ *		位或表达式 := 位异或表达式 {'|' 位异或表达式}
+ *		位异或表达式 := 位与表达式 {'^' 位与表达式}
+ *		位与表达式 := 相等表达式 {'&' 相等表达式}
+ *		相等表达式 := 比较表达式 { ('==' | '!=') 比较表达式}
+ *		比较表达式 := 移位表达式 { ('<' | '>' | '<=' | '>=') 移位表达式}
+ *		移位表达式 := 加法表达式 { ('<<' | '>>') 加法表达式}
+ *		加法表达式 := 乘法表达式 { ('+' | '-') 乘法表达式}
+ *		乘法表达式 := 转换表达式 { ('*' | '/' | '%') 转换表达式}
+ *		转换表达式 := '(' 类型名 ')' 转换表达式 | 一元表达式
+ *		类型名 := 类型及修饰 [类型申明器]
+ *		一元表达式 := {'++' | '--'} ( 后缀表达式 | 一元操作 转换表达式 | sizeof ('('类型名')' | 一元表达式) )
+ *		后缀表达式 := 基本表达式 { '[' 表达式 ']' | '.' 标识符 | '->' 标识符 | '(' [赋值表达式 {','赋值表达式}] ')' | "++" | "--" }
+ *		基本表达式 := 标识符 | 整型常量 | 浮点常量 | 字符常量 | 字符串常量 | 布尔常量 | '(' 表达式 ')'
+ *		布尔常量 := true | true
+ *		赋值操作 := '=' | '*=' | '/=' | '%=' | '+=' | '-=' | '<<=' | '>>=' | '&=' | '^=' | '|='
+ *		一元操作 := '&' | '*' | '+' | '-' | '~' | '!'
+ ******************************************************************************/
+
+TYPES:
+	/* 字符串管理表 */
+	struct CEhcStringTable
+	{
+		vector<string> pTable;
+		bool bMultiSet;
+	};
+
+	/* 段管理 */
+	struct CEhcSegment
+	{
+		uint nPos;
+		vector<char> pHead;
+		char cFillChar;
+	};
+
+	//类型信息
+	struct CEhcArrayInfo;
+	struct CEhcEnumInfo;
+	struct CEhcStructInfo;
+	struct CEhcFunctionInfo;
+	union CEhcTypeDetailInfo
+	{
+		CEhcArrayInfo pStructInfo;
+		CEhcEnumInfo pEnumInfo;
+		CEhcStructInfo pStructInfo;
+		CEhcFunctionInfo pFunctionInfo;
+	};
+	struct CEhcTypeInfo
+	{
+		string oName;
+		uint nQual;
+		uint nType;
+		uint nSize;
+		CEhcTypeDetailInfo oInfo;
+		CEhcTypeInfo pNext;
+	};
+
+	//数组信息
+	struct CEhcArrayInfo
+	{
+		uint nDim;
+	};
+
+	//枚举信息
+	struct CEhcEnumInfo
+	{
+		bool bImplemented;
+		int nNextValue;
+	};
+
+	//结构信息
+	struct CEhcStructFieldInfo
+	{
+		string oName;
+		CEhcTypeInfo pType;
+		uint nOffset;
+		uint nBitCount;
+		uint nBitOffset;
+		CEhcStructFieldInfo pNext;
+	};
+	struct CEhcStructInfo
+	{
+		bool bImplemented;
+		uint nSize;
+		uint nAlign;
+		uint nFieldCount;
+		CEhcStructFieldInfo pHead;
+		CEhcStructFieldInfo pTail;
+	};
+
+	//变量信息
+	struct CEhcVariableInfo
+	{
+		string oName;
+		CEhcTypeInfo pType;
+		uint nVarId;
+		uint nOpt;
+		uint nArg;
+		CEhcVariableInfo pNext;
+	};
+
+	//函数信息
+	struct CEhcFunctionInfo
+	{
+		CEhcTypeInfo pType;
+		uint nArgCount;
+		CEhcVariableInfo pHead, pTail;
+		uint nArgSize;
+		uint nOpt;
+		uint nArg;
+	};
+
+	//栈信息
+	struct CEhcVariableInStack
+	{
+		bool bUsed;
+		uint nDataLen;
+		uint nAlign;
+		uint nPosition;
+		CEhcVariableInStack pNext;
+	};
+	struct CEhcVariableTable
+	{
+		CEhcVariableTable pPrev;
+		uint nStartPosition;
+		CEhcVariableInStack pHead;
+		CEhcVariableInStack pTail;
+	};
+	struct CEhcLocalStack
+	{
+		uint nPos;
+		uint nSize;
+		CEhcVariableTable pVariableTable;
+	};
+
+	//符号信息
+	union CEhcSymbolInfo
+	{
+		CEhcTypeInfo pType;
+		CEhcFunctionInfo pFunction;
+		CEhcVariableInfo pVariable;
+	};
+	struct CEhcSymbol
+	{
+		uint nStorage;
+		uint nSymbol;
+		string oName;
+		CEhcSymbolInfo oInfo;
+		CEhcSymbol pNext;
+	};
+	struct CEhcSymbolList
+	{
+		CEhcSymbol pHead;
+		CEhcSymbol pTail;
+	};
+	struct CEhcSymbolTable
+	{
+		CEhcSymbolTable pPrev;
+		CEhcFunctionInfo pFunction;
+		vector<CEhcSymbolList> oHashTable;
+	};
+	struct CEhcProtoType
+	{
+		bool bUsed;
+		uint nNewIdx;
+		CEhcSymbol oSymbol;
+	};
+	struct CEhcProtoTypeTable
+	{
+		vector<CEhcProtoType> pProtoTypeTable;
+	};
+	struct CEhcSymbolStack
+	{
+		uint nLevel;
+		CEhcSymbolTable pSymbolTable;
+		CEhcFunctionInfo pInFunction;
+		CEhcProtoTypeTable oProtoTypeTable;
+		CEhcSegment oCodeSegment;
+		CEhcSegment oConstSegment;
+		CEhcConstTable oConstTable;
+		CEhcLocalStack oDataSegment;
+		CEhcLocalStack oGlobalStack;
+		CEhcLocalStack oLocalStack;
+	};
+
+	//常量信息
+	struct CEhcConst
+	{
+		uint nOffset;
+		uint nLen;
+		uint nAlign;
+		CEhcConst pNext;
+	};
+	struct CEhcConstTable
+	{
+		CEhcConst pHead;
+		CEhcConst pTail;
+	};
+
+	//统一数据
+	union CEhcVal
+	{
+		char c;
+		short s;
+		int i;
+		long l;
+		uchar uc;
+		ushort us;
+		uint ui;
+		ulong ul;
+		float f;
+		double d;
+	};
+
+	//指令结构
+	struct CEhcIns
+	{
+		ushort nOp;
+		uchar nOpt1;
+		uchar nOpt2;
+		uint nArg1;
+		uint nArg2;
+	};
+
+	//表达式
+	struct CEhcExpress
+	{
+		CEhcTypeInfo pType;
+		int nVarId;
+		uint nOpt;
+		uint nArg;
+		uint nBits;
+		uint nStart;
+		uint nQuote;
+		uint nLeftValue;
+	};
+
+	//转换节点
+	struct CEhcCastNode
+	{
+		uint nClass;
+		uint nType;
+		uint nPrevArith;
+		uint nNextArith;
+		uint nUpArith;
+		uint nDownArith;
+	};
+
+	//转换表
+	struct CEhcCastTable
+	{
+		vector<CEhcCastNode> pTable;
+	};
+
+	//Break栈
+	struct CEhcBreakTable
+	{
+		CEhcBreakTable pPrev;
+		vector<uint> pBreakTable;
+	};
+	struct CEhcBreakStack
+	{
+		CEhcBreakTable pBreakTable;
+	};
+
+	//Goto栈
+	struct CEhcGotoFillError
+	{
+		int nLine;
+		int nCol;
+		string sFileName;
+		string sLabel;
+	};
+	struct CEhcGoto
+	{
+		string oLabelName;
+		uint nInsAddr;
+		int nLine;
+		int nCol;
+		string sFileName;
+	};
+	struct CEhcGotoNode
+	{
+		string oName;
+		uint nAddr;
+		CEhcGotoNode pNext;
+	};
+	struct CEhcGotoBulket
+	{
+		CEhcGotoNode pHead;
+		CEhcGotoNode pTail;
+	};
+	struct CEhcGotoTable
+	{
+		CEhcGotoTable pPrev;
+		vector<CEhcGotoBulket> pLabelTable;//HashTable<char*,uint>
+		vectot<CEhcGoto> pGotoTable;
+	};
+	struct CEhcGotoStack
+	{
+		CEhcGotoTable pGotoTable;
+	};
+
+	//switch栈
+	struct CEhcSwitchNode
+	{
+		ulong nCase;
+		uint nAddr;
+		CEhcSwitchNode pNext;
+	};
+	struct CEhcSwitchBulket
+	{
+		CEhcSwitchNode pHead;
+		CEhcSwitchNode pTail;
+	};
+	struct CEhcSwitchTable
+	{
+		CEhcSwitchTable pPrev;
+		uint nType;
+		uint nDefaultCase;
+		vector<CEhcSwitchBulket> pSwitchTable;//HashTable<ulong,uint>
+	};
+	struct CEhcSwitchStack
+	{
+		CEhcSwitchTable pSwitchTable;
+	};
+	struct CEhcCaseItem
+	{
+		uint nCount;
+		uint nStart;
+		uint nDefault;
+	};
+
+	//解析器
+	struct CEhcParser
+	{
+		CEhcSymbolStack oSymbolStack;
+		CEhcGotoStack oGotoStack;
+		CEhcBreakStack oBreakStack;
+		CEhcContinueStack oContinueStack;
+		CEhcSwitchStack oSwitchStack;
+		CEhcFunctionInfo* pFunction;
+		bool bSupportHostSymbol;
+		bool bSupportShareSymbol;
+	};
+
+VARIABLES:
+	//类型编码
+	uint EHC_VOID;		// 0
+	uint EHC_FLOAT;		// 1
+	uint EHC_DOUBLE;	// 2
+	uint EHC_CHAR;		// 3
+	uint EHC_SHORT;		// 4
+	uint EHC_INT;		// 5
+	uint EHC_LONG;		// 6
+	uint EHC_POINTER;	// 7
+	uint EHC_ENUM;		// 8
+	uint EHC_STRUCT;	// 9
+	uint EHC_UNION;		// 10
+	uint EHC_ARRAY;		// 11
+	uint EHC_FUNCTION;	// 12
+	uint EHC_ALIAS;		// 13
+	uint EHC_SIGNED;	// 0x00001000,
+	uint EHC_UNSIGNED;	// 0x00002000,
+	uint EHC_SIGNED_CHAR;	// = EHC_CHAR | EHC_SIGNED,
+	uint EHC_UNSIGNED_CHAR;	// = EHC_CHAR | EHC_UNSIGNED,
+	uint EHC_SIGNED_SHORT;	// = EHC_SHORT | EHC_SIGNED,
+	uint EHC_UNSIGNED_SHORT;// = EHC_SHORT | EHC_UNSIGNED,
+	uint EHC_SIGNED_INT;	// = EHC_INT | EHC_SIGNED,
+	uint EHC_UNSIGNED_INT;	// = EHC_INT | EHC_UNSIGNED,
+	uint EHC_SIGNED_LONG;	// = EHC_LONG | EHC_SIGNED,
+	uint EHC_UNSIGNED_LONG;	// = EHC_LONG | EHC_UNSIGNED,
+	//类型修饰
+	uint EHC_NONE;		// = 0,
+	uint EHC_TYPEDEF;	// = 1,
+	uint EHC_EXTERN;	// = 2,
+	uint EHC_HOST;		// = 4,
+	uint EHC_SHARE;		// = 8,
+	uint EHC_STATIC;	// = 16,
+	uint EHC_AUTO;		// = 32,
+	uint EHC_REGISTER;	// = 64,
+	uint EHC_CONST;		// = 128,
+	uint EHC_VOLATILE;	// = 256
+	uint EHC_RESTRICT;	// 512
+	//符号类别
+	uint EHC_TYPE_SYMBOL;		// 0
+	uint EHC_VARIABLE_SYMBOL;	// 1
+	uint EHC_FUNCTION_SYMBOL;	// 2
+	uint EHC_ENUM_SYMBOL;		// 3
+	//寻址模式
+	uint EHC_UN; //0 未定义寻址方式，不会出现在指令中，只会出现在符号表的符号属性中。
+	uint EHC_IS; //1 常量段寻址【立即数】
+	uint EHC_DS; //2 数据段寻址
+	uint EHC_CS; //3 代码段寻址
+	uint EHC_LS; //4 局部段寻址
+	uint EHC_AS; //5 参数段寻址
+	uint EHC_TS; //6 临时段寻址，用于构造函数参数的段
+	uint EHC_SS; //7 符号段寻址
+	uint EHC_HS; //8 主机段寻址，不会出现在指令中，只会出现在符号表的符号属性中。
+	//一元操作
+	uint EHC_UNARY_GETADDR; //'&'
+	uint EHC_UNARY_GETVALUE; //'*'
+	uint EHC_UNARY_POSITIVE; //'+'
+	uint EHC_UNARY_NEGATIVE; //'-'
+	uint EHC_UNARY_BIT_NOT; //'~'
+	uint EHC_UNARY_LOGIC_NOT; //'!'
+	//二元操作
+	uint EHC_BINARY_ADD; // 1
+	uint EHC_BINARY_SUB; // 2
+	uint EHC_BINARY_MUL; // 3
+	uint EHC_BINARY_DIV; // 4
+	uint EHC_BINARY_MOD; // 5
+	uint EHC_BINARY_LSHIFT; // 6
+	uint EHC_BINARY_RSHIFT; // 7
+	uint EHC_BINARY_BIT_AND; // 8
+	uint EHC_BINARY_BIT_OR; // 9
+	uint EHC_BINARY_BIT_XOR; // 10
+	uint EHC_BINARY_LT; // 11
+	uint EHC_BINARY_LE; // 12
+	uint EHC_BINARY_MT; // 13
+	uint EHC_BINARY_ME; // 14
+	uint EHC_BINARY_EQ; // 15
+	uint EHC_BINARY_NE; // 16
+	uint EHC_BINARY_LOGIC_AND; // 17
+	uint EHC_BINARY_LOGIC_OR; // 18
+	//赋值操作
+	uint EHC_ASSIGN_EQUAL;// = 0xFF000000, 
+	uint EHC_ASSIGN_ADD_EQ;// = JC_BINARY_ADD | JC_ASSIGN_EQUAL,
+	uint EHC_ASSIGN_SUB_EQ;// = JC_BINARY_SUB | JC_ASSIGN_EQUAL,
+	uint EHC_ASSIGN_MUL_EQ;// = JC_BINARY_MUL | JC_ASSIGN_EQUAL,
+	uint EHC_ASSIGN_DIV_EQ;// = JC_BINARY_DIV | JC_ASSIGN_EQUAL,
+	uint EHC_ASSIGN_MOD_EQ;// = JC_BINARY_MOD | JC_ASSIGN_EQUAL,  
+	uint EHC_ASSIGN_LSH_EQ;// = JC_BINARY_LSHIFT | JC_ASSIGN_EQUAL,
+	uint EHC_ASSIGN_RSH_EQ;// = JC_BINARY_RSHIFT | JC_ASSIGN_EQUAL,
+	uint EHC_ASSIGN_AND_EQ;// = JC_BINARY_BIT_AND | JC_ASSIGN_EQUAL,
+	uint EHC_ASSIGN_OR_EQ; // = JC_BINARY_BIT_OR | JC_ASSIGN_EQUAL,
+	uint EHC_ASSIGN_XOR_EQ;// = JC_BINARY_BIT_XOR | JC_ASSIGN_EQUAL
+
+	//解析器上下文
+	CEhcParser oParser;
+
+TOKENS:
+	Comments = SKIP "//[(//^\n*\n?)(/*[</*//!>@]*/*//)]" .
+	CONST alignofkey = "alignof" .
+	CONST autokey = "auto" .
+	CONST boolkey = "bool" .
+	CONST breakkey = "break" .
+	CONST casekey = "case" .
+	CONST charkey = "case" .
+	CONST constkey = "const" .
+	CONST continuekey = "continue" .
+	CONST defaultkey = "default" .
+	CONST dokey = "do" .
+	CONST doublekey = "double" .
+	CONST elsekey = "else" .
+	CONST enumkey = "enum" .
+	CONST externkey = "extern" .
+	CONST falsekey = "false" .
+	CONST floatkey = "float" .
+	CONST forkey = "for" .
+	CONST gotokey = "goto" .
+	CONST hostkey = "host" .
+	CONST ifkey = "if" .
+	CONST inlinekey = "inline" .
+	CONST intkey = "int" .
+	CONST longkey = "long" .
+	CONST registerkey = "register" .
+	CONST returnkey = "return" .
+	CONST sharekey = "share" .
+	CONST shortkey = "short" .
+	CONST signedkey = "signed" .
+	CONST sizeofkey = "sizeof" .
+	CONST statickey = "static" .
+	CONST structkey = "struct" .
+	CONST switchkey = "switch" .
+	CONST typedefkey = "typedef" .
+	CONST unionkey = "union" .
+	CONST restrictkey = "restrict" .
+	CONST unsignedkey = "unsigned" .
+	CONST voidkey = "void" .
+	CONST volatilekey = "volatile" .
+	CONST whilekey = "while" .
+	CONST truekey = "true" .
+
+	CONST Ellipsis = "..." .
+	CONST LeftShiftEqual = "<<=" .
+	CONST RightShiftEqual = ">>=" .
+	CONST MulEqual = "*=" .
+	CONST DivEqual = "/=" .
+	CONST ModEqual = "%=" .
+	CONST AddEqual = "+=" .
+	CONST SubEqual = "-=" .
+	CONST AndEqual = "&=" .
+	CONST OrEqual = "|=" .
+	CONST XorEqual = "^=" .
+	CONST LogicOr = "||" .
+	CONST LogicAnd = "&&" .
+	CONST EqualEqual = "==" .
+	CONST NotEqual = "!=" .
+	CONST GreaterEqual = ">=" .
+	CONST LessEqual = "<=" .
+	CONST LeftShift = "<<" .
+	CONST RightShift = ">>" .
+	CONST PlusPlus = "++" .
+	CONST MinusMinus = "--" .
+	CONST POINTO = "->" .
+	CONST Tilde = "~" .;
+	CONST Exclam = "!" .;
+	CONST Percent = "%" .;
+	CONST Caret = "^" .;
+	CONST Ampersand = "&" .;
+	CONST Star = "*" .;
+	CONST LeftParen = "(" .;
+	CONST RightParen = ")" .;
+	CONST Minus = "-" .;
+	CONST Plus = "+" .;
+	CONST Equal = "=" .;
+	CONST LeftBrace = "{" .;
+	CONST RightBrace = "}" .;
+	CONST LeftBracket = "[" .;
+	CONST RightBracket = "]" .;
+	CONST Bar = "|" .;
+	CONST Slash = "/" .;
+	CONST Colon = ":" .;
+	CONST Semicolon = ";" .;
+	CONST Less = "<" .;
+	CONST Greater = ">" .;
+	CONST Comma = "," .;
+	CONST Period = "." .;
+	CONST Question = "?" .
+
+	Identifier = "[%AZ%%az%_][%AZ%%az%_%09%]*" .
+	ConstString = "\"[(\\@)<[\"\n]!>@]*\"" .
+	ConstInteger = "[(%19%%09%*)(0[([xX][%09%%AF%%af%][%09%%AF%%af%]*)(%07%*)])][([uU][lL8(16)(32)(64)]?)([iI][8(16)(32)(64)])]?" .
+	ConstFloat = "[(.%09%*([eE][/+/-]%09%%09%*)?)(%09%%09%*[(.%09%*([eE][/+/-]%09%%09%*)?)([eE][/+/-]%09%%09%*)])][fF]?" .
+
+RULES:
+	/* 内部接口定义 */
+
+	/* 字符串管理表 */
+	int InitStringTable(CEhcStringTable& oTable, bool bMultiSet);
+	int ClearStringTable(CEhcStringTable& oTable);
+	int SaveString(CEhcStringTable& oTable, string &s);//不能修改s
+	int FindString(CEhcStringTable& oTable, string &s);//不能修改s
+	int RemoveString(CEhcStringTable& oTable, string &s);
+
+	/* 段管理 */
+	int InitializeSegment(CEhcSegment& oSegment, char cFillChar);
+	int ClearSegment(CEhcSegment& oSegment);
+	int CompactSegment(CEhcSegment& oSegment);
+
+	uint GetSizeOfSegment(CEhcSegment& oSegment);
+	uint GetPosOfSegment(CEhcSegment& oSegment);
+	int SetPosOfSegment(CEhcSegment& oSegment, uint nPos);
+	int RollBackSegment(CEhcSegment& oSegment, uint nOffset);
+
+	uint PutInSegment(CEhcSegment& oSegment, vector<char>& oData, uint nAlign);
+	uint PutInSegmentChar(CEhcSegment& oSegment, char c);//内部函数
+	uint PutInSegmentUChar(CEhcSegment& oSegment, uchar uc);//内部函数
+	uint PutInSegmentShort(CEhcSegment& oSegment, short s);//内部函数
+	uint PutInSegmentUShort(CEhcSegment& oSegment, ushort us);//内部函数
+	uint PutInSegmentInt(CEhcSegment& oSegment, int i);//内部函数
+	uint PutInSegmentUInt(CEhcSegment& oSegment, uint ui);//内部函数
+	uint PutInSegmentLong(CEhcSegment& oSegment, long i);//内部函数
+	uint PutInSegmentULong(CEhcSegment& oSegment, ulong ui);//内部函数
+	uint PutInSegmentFloat(CEhcSegment& oSegment, float i);//内部函数
+	uint PutInSegmentDouble(CEhcSegment& oSegment, double ui);//内部函数
+	uint PutInSegmentString(CEhcSegment& oSegment, string &s);//内部函数
+	char GetInSegmentChar(CEhcSegment& oSegment, uint nOff);//内部函数
+	ucahr GetInSegmentUChar(CEhcSegment& oSegment, uint nOff);//内部函数
+	short GetInSegmentShort(CEhcSegment& oSegment, uint nOff);//内部函数
+	ushort GetInSegmentUShort(CEhcSegment& oSegment, uint nOff);//内部函数
+	int GetInSegmentInt(CEhcSegment& oSegment, uint nOff);//内部函数
+	uint GetInSegmentUInt(CEhcSegment& oSegment, uint nOff);//内部函数
+	long GetInSegmentLong(CEhcSegment& oSegment, uint nOff);//内部函数
+	ulong GetInSegmentULong(CEhcSegment& oSegment, uint nOff);//内部函数
+	float GetInSegmentFloat(CEhcSegment& oSegment, uint nOff);//内部函数
+	double GetInSegmentDouble(CEhcSegment& oSegment, uint nOff);//内部函数
+	string GetInSegmentString(CEhcSegment& oSegment, uint nOff);//内部函数
+
+	/* CEhcBreakStack */
+	int InitializeBreakStack(CEhcBreakStack pStack);
+	int ClearBreakStack(CEhcBreakStack pStack);
+	int NewBreakTable(CEhcBreakStack pStack);
+	int PopBreakTable(CEhcBreakStack pStack);
+	uint BreakEmpty(CEhcBreakStack pStack);
+	int BackFillBreakStack(CEhcBreakStack pStack, CEhcSegment pCodeSegment, uint nLoopAddr);
+	uint CreateBreak(CEhcBreakStack pStack, uint nBreakInsAddr);
+
+	/* 规则定义 */
+	Main Ehc = 
+	{
+		(?
+			TopDeclare
+			Sentence
+		?)
+	} .
+	
+	TopDeclare = <string k, bool bNotFunctor>
+	(
+		DeclareSpecifier
+		(?
+			Semicolon
+			(
+				Declaror<! 0, 1, 1 !>
+				(.
+					k = GetTokenString(NextToken());
+					bNotFunctor = (StrCmp(k, "=") || StrCmp(k, ",") || strcmp(k, ";"));
+				.)
+				(?
+					if(bNotFunctor) 
+					(
+						{?
+							Equal Initializer
+						?}
+						{
+							Comma InitDeclaror
+						}
+						Semicolon
+					)
+					Functor,
+				?)
+			)
+		?)
+	) .
+
+	Functor =
+	(
+		{
+			Declare
+		}
+		ComplexSentence
+	) .
+
+	Declare = 
+	(
+		SubDeclare Semicolon
+	) .
+
+	ForDeclare
+	(
+		SubDeclare
+		{
+			Comma
+			SubDeclare
+		}
+	) .
+
+	SubDeclare = 
+	(
+		DeclareSpecifier
+		InitDeclaror
+		{
+			Comma
+			InitDeclaror
+		}
+	) .
+
+	InitDeclaror = 
+	(
+		Declaror<! 0, 1, 1 !> 
+		{?
+			Equal
+			Initializer
+		?}
+	) .
+
+	DeclareSpecifier = 
+	(
+		{? StorageSpecifier ?}
+		TypeAndQual
+	) .
+
+	TypeAndQual = 
+	(
+		{? QualSpecifier ?}
+		TypeSpecifier
+		{? QualSpecifier ?}
+	) .
+
+	StorageSpecifier = 
+	(?
+		typedefkey
+		externkey
+		statickey
+		autokey
+		registerkey
+		inlinekey
+		sharekey
+		hostkey
+	?) .
+
+	QualSpecifier = 
+	(?
+		( constkey (? (volatilekey {? restrictkey ?} ) ( restrictkey {? volatilekey ?} ) ?) )
+		( volatilekey (? (constkey {? restrictkey ?} ) ( restrictkey {? constkey ?} ) ?) )
+		( restrictkey (? (constkey {? volatilekey ?} ) ( volatilekey {? constkey ?} ) ?) )
+	?) .
+
+	TypeSpecifier =
+	(?
+		voidkey
+		boolkey
+		floatkey
+		doublekey
+		IntegerSpecifier
+		SignSpecifier
+		StructSpecifier
+		EnumSpecifier
+	?) .
+
+	IntegerSpecifier = 
+	(?
+		Identifier
+		charkey
+		intkey
+		(shortkey {? intkey ?} )
+		(longkey {? (? doublekey ( longkey {? (? doublekey intkey ?) ?} ) ?) ?} ) 
+	?) .
+
+	SignSpecifier = 
+	(
+		(? signedkey unsignedkey ?) {? IntegerSpecifier ?}
+	) .
+
+	StructSpecifier = 
+	(
+		(? structkey unionkey ?)
+		(?
+			( Identifier {? LeftBrace { StructDeclare } RightBrace  ?} )
+			( LeftBrace { StructDeclare } RightBrace )
+		?)
+	) .
+
+	StructDeclare = 
+	(
+		TypeAdnQual StructDeclaror { Comma StructDeclaror } Semicolon
+	) .
+
+	StructDeclaror = 
+	(?
+		( Declaror<! 0, 2, 0 !> {? Colon Express ?} )
+		( Colon Express )
+	?) .
+
+	EnumSpecifier = 
+	(
+		enumkey
+		(?
+			( Identifier {? LeftBrace Enumer { Comma Enumer } RightBrace  ?} )
+			( LeftBrace Enumer { Comma Enumer } RightBrace )
+		?)
+	) .
+
+	Enumer = 
+	(
+		Identifier {? Equal Express ?}
+	) .
+
+	Declaror<uint p, uint i, uint f> = 
+	( //p==1，指针必选，否则指针式可选.
+	  //i==1标识符必选，i==2标识符可选, i==3不能包含标识符
+	  //f==1函数可选，否则不能包含函数
+		(? (IF(p) PointerSpecifier) {? PointerSpecifier ?} ?)
+		(?
+			( LeftParen Declaror<! 1,i,1 !> RightParen (? ArrayDeclaror FuncDeclaror ?) )
+			(IF(i==1) Identifier (? ( IF(f) {? (? ArrayDeclaror FuncDeclaror ?) ?} ) {? ArrayDeclaror ?} ?) ) 
+			(IF(i==2) {?Identifier?} (? ( IF(f) {? (? ArrayDeclaror FuncDeclaror ?) ?} ) {? ArrayDeclaror ?} ?) )
+			(IF(i==3) (? ( IF(f) {? (? ArrayDeclaror FuncDeclaror ?) ?} ) {? ArrayDeclaror ?} ?) )
+		?)
+	) .
+
+	ArrayDeclaror =
+	(
+		LeftBracket {? Express ?} RightBracket
+	) .
+
+	FuncDeclaror = 
+	(
+		LeftParen {? (? IdentifierList ParaList ?) ?} RightParen
+	) .
+
+	IdentifierList = 
+	(
+		Identifier {Comma Identifier}
+	) .
+
+	ParaList = 
+	(
+		ParaDeclare {Comma ParaDeclare} {? Comma Ellipsis ?}
+	) .
+
+	ParaDeclare = 
+	(
+		TypeAndQual Declaror<! 0, 1, 0 !>
+	) .
+
+	Initializer = 
+	(?
+		AssignExpress
+		(
+			LeftBrace
+			Initializer { Comma Initializer } {? Comma ?}
+			RightBrace
+		)
+	?) .
+	
+	Sentence =
+	(?
+		LabelSentence
+		CaseSentence
+		DefaultSentence
+		ExpressSentence
+		IfSentence
+		SwitchSentence
+		WhileSentence
+		DoSentence
+		ForSentence
+		GotoSentence
+		ContinueSentence
+		BreakSentence
+		returnSentence
+		ComplexSentence
+	?) .
+
+	LabelSentence = ( Identifier Colon ) .
+	CaseSentence = (casekey Express Colon ) .
+	IfSentence = ( ifkey LeftParen Express RightParen Sentence {? elsekey Sentence ?} ) .
+	SwitchSentence = ( switchkey LeftParen Express RightParen ComplexSentence ).
+	WhileSentence = ( whilekey LeftParen Express RightParen Sentence ) .
+	DoSentence = ( dokey ComplexSentence whilekey LeftParen Express RightParen Semicolon) .
+	ForSentence = ( forkey LeftParen {? (? Express ForDeclare ?) ?} Semicolon {? Express ?} Semicolon {? Express ?} RightParen Sentence) .
+	GotoSentence = ( gotokey Semicolon ) .
+	ContinueSentence = ( continuekey Semicolon ) .
+	BreakSentence = ( breakkey Semicolon ) .
+	ReturnSentence = ( returnkey {? Express ?} Semicolon ) .
+	ExpressSentence = ( {? Express ?} Semicolon ) .
+
+	Express = 
+	(
+		AssignExpress {Comma AssignExpress}
+	) .
+
+	AssignExpress = 
+	(
+		CondExpress {? AssignOperator AssignExpress ?}
+	) .
+
+	CondExpress = 
+	(
+		LogicOrExpress {? Question Express Colon CondExpress ?}
+	) .
+
+	LogicOrExpress = 
+	(
+		LogicAndExpress { LogicOr LogicAndExpress }
+	) .
+
+	LogicAndExpress = 
+	(
+		BitOrExpress { LogicAnd BitOrExpress }
+	) .
+
+	BitOrExpress = 
+	(
+		BitXorExpress { Bar BitXorExpress }
+	) .
+
+	BitXorExpress = 
+	(
+		BitAndExpress { Caret BitAndExpress }
+	) .
+
+	BitAndExpress = 
+	(
+		EqualExpress { Ampersand EqualExpress }
+	) .
+
+	EqualExpress = 
+	(
+		CompareExpress { (? EqualEqual NotEqual ?) CompareExpress }
+	) .
+
+	CompareExpress = 
+	(
+		ShiftExpress { (? Less Greater LessEqual GreaterEqual ?) ShiftExpress}
+	) .
+
+	ShiftExpress = 
+	(
+		PlusExpress { (? LeftShift RightShift ?) PlusExpress }
+	) .
+
+	PlusExpress = 
+	(
+		MulExpress { (? Plus Minus ?) MulExpress }
+	) .
+
+	MulExpress = 
+	(
+		CastExpress { (? Star Slash Percent ?) CastExpress }
+	) .
+
+	CastExpress = 
+	(?
+		(LeftParen TypeName RightParen CastExpress)
+		UnaryExpress
+	?) .
+
+	TypeName = 
+	(
+		TypeAndQual Declaror<! 0, 3, 0 !>
+	) .
+
+	UnaryExpress = 
+	(
+		{ (? PlusPlus MinusMinus ?) }
+		(?
+			PostfixExpress 
+			(UnaryOperator CastExpress)
+			(sizeofkey (? (LeftParen TypeName RightParen) UnaryExpress ?) )
+		?)
+	) .
+
+	PostfixExpress =
+	(
+		PrimaryExpress 
+		{
+			(?
+				(LeftBracket Express RightBracket)
+				(Period Identifier)
+				(POINTO Identifier)
+				(LeftParen {? AssignExpress {Comma AssignExpress} ?} RightParen)
+				PlusPlus
+				MinusMinus
+			?)
+		}
+	) .
+
+	PrimaryExpress = 
+	(?
+		Identifier
+		ConstInteger
+		ConstFloat
+		ConstString
+		ConstChar
+		ConstBool
+		(LeftParen Express RightParen)
+	?) .
+
+	ConstBool = (? truekey falsekey ?) .
+	AssignOperator = (? Equal MulEqual DivEqual ModEqual AddEqual SubEqual AndEqual OrEqual XorEqual LeftShiftEqual RightShiftEqual ?) .
+	UnaryOperator = (? Ampersand Star Plus Minus Tilde Exclam ?) .
+
+	/* 自定义函数 */
+	int InitStringTable(CEhcStringTable& oTable, bool bMultiSet)
+	{
+		oTable.bMultiSet = bMultiSet;
+		oTable.pTable.size(0);
+	}
+
+	int ClearStringTable(CEhcStringTable& oTable)
+	{
+		oTable.pTable.size(0);
+	}
+
+	int SaveString(CEhcStringTable& oTable, string &s)//不能修改s
+	{
+		result = -1;
+		if(!pTable.bMultiSet)
+			result = FindString(oTable, s);
+		if(result < 0)
+		{
+			result = oTable.pTable.size;
+			oTable.pTable.size(result+1);
+			oTable.pTable[result] = s;
+		}
+	}
+
+	int FindString(CEhcStringTable& oTable, string &s)//不能修改s
+	{
+		int nSize;
+		result = -1;
+		nSize = oTable.pTable.size;
+		for(result=0; result<nSize; ++i)
+		{
+			if(!StrCmp(s, oTable.pTable[i], true, 0))
+			{
+				result = i;
+				break;
+			}
+		}
+	}
+
+	int RemoveString(CEhcStringTable& oTable, string &s)
+	{
+		result = FindString(oTable, s);
+		if(result >= 0)
+			oTable.pTable.remove(result);
+	}
+
+	int InitializeSegment(CEhcSegment& oSegment, char cFillChar)
+	{
+		oSegment.nPos = 0;
+		oSegment.pHead.size(0);
+		oSegment.cFillChar = cFillChar;
+	}
+
+	int ClearSegment(CEhcSegment& oSegment)
+	{
+		oSegment.nPos = 0;
+		oSegment.pHead.size(0);
+	}
+
+	int CompactSegment(CEhcSegment& oSegment)
+	{
+		oSegment.pHead.size(oSegment.nPos);
+	}
+
+	uint GetSizeOfSegment(CEhcSegment& oSegment)
+	{
+		result = oSegment.pHead.size;
+	}
+
+	uint GetPosOfSegment(CEhcSegment& oSegment)
+	{
+		return oSegment.nPos;
+	}
+
+	int SetPosOfSegment(CEhcSegment& oSegment, uint nPos)
+	{
+		uint nSize = oSegment.pHead.size;
+		if(nPos > nSize)
+			nPos = nSize;
+		oSegment.nPos = nPos;
+	}
+
+	int RollBackSegment(CEhcSegment& oSegment, uint nOffset)
+	{
+		SetPosOfSegment(oSegment, nOffset);
+		CompactSegment(oSegment);
+	}
+
+	uint PutInSegment(CEhcSegment& oSegment, vector<char>& oData, uint nAlign)
+	{
+		uint nSize1;
+		uint nSize2;
+		uint nNeedSize;
+		uint nPos;
+		uint i;
+		uint nExt;
+
+		nPos = oSegment.nPos;
+		i = nPos % nAlign;
+		nExt = 0;
+		if(nMod)
+			nExt = nAlign - i;
+		result = nPos + nExt;
+		nSize1 = oSegment.pHead.size;
+		nSize2 = oData.size;
+		nNeedSize = result + nSize2;
+		if(nNeedSize > nSize1)
+			oSegment.pHead.size(nNeedSize);
+
+		for(i = 0; i<nExt; ++i)
+			oSegment.pHead[nPos+i] = oSegment.cFillChar;
+
+		nPos = result;
+		for(i = 0; i<nSize2; ++i)
+			oSegment.pHead[nPos+i] = oData[i];
+
+		oSegment.nPos = nPos + nSize2;
+	}

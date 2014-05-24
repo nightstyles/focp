@@ -1,0 +1,292 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN">
+
+<head>
+<!--TOOLBAR_EXEMPT-->
+
+
+	<title>Platform SDK Update</title>
+	<META NAME="MS.LOCALE" CONTENT="EN-US">
+	<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=ISO-8859-1">
+	<META http-equiv=Pragma content=no-cache>
+	<META HTTP-EQUIV="Expires" CONTENT="-1">
+	
+
+<script language="Javascript" src="common.js"></script>	
+<script language="Javascript" src="checkBrowser.js"></script>		
+<script language="Javascript" src="selectItems.js"></script>
+<SCRIPT LANGUAGE="Javascript">
+	window.name = 'default_top'
+	
+	//Declare global variables 
+	var strBuild = null; // not used in default_local.htm, but declare for workaround for bug 454873
+	var strBuildFull = null; // not used in default_local.htm, but declare for workaround for bug 454873
+	var strSDK = null;	//holds the GUID of the SDK to add or remove
+	var intExpandedSize = 0;
+	var xmlInstalled = null; //holds list of item user has installed on their machine
+	var xmlSelected = null; //holds install/update selections
+	var xmlUninstall = null; //holds uninstall selections
+	var guidInstallThisSDK = null; //Guid of an SDK to install (used by details and info pages)
+	var guidUninstallThisSDK = null; //Guid of an SDK to uninstall (used by details and info pages)
+	var xmlSource = null;
+	
+	//Declare global functions	
+	/*	
+	-------------------------------------------------------
+	Name:
+		initXmlInstalled
+	
+	Description:
+		This file initializes and sets a value for xmlInstalled
+		it is called by update.htm which sets the value returned
+		from SDKInstall
+		
+	Parameters:
+		The node to initialize xmlInstalled with.
+	
+	Return Value:	
+		0 if sucess, 1 if failure
+	-------------------------------------------------------		
+	*/
+	function initXmlInstalled(ndInstalled)
+	{
+		var ndTemp = null;
+				
+		//have to clone the node so it persists when update.htm is closed		
+		ndTemp = ndInstalled.cloneNode(true);
+		if(ndTemp != null)
+		{
+			xmlInstalled = new ActiveXObject("Microsoft.XMLDOM");
+			if (xmlInstalled == null)
+			{
+				//create failed
+				return 1;
+			}
+			
+			ndTemp = xmlInstalled.appendChild(ndTemp);
+			if(ndTemp == null)
+			{
+				//append failed
+				return 1;
+			}
+		}
+		else
+		{
+			//clone failed
+			return 1;
+		}		
+		
+		return 0;
+	}
+	
+	/*	
+	-------------------------------------------------------
+	Name:
+		initXmlSelected
+	
+	Description:
+		Initializes or clears the xmlSelected global variable
+		This method is called by update.htm to initialize 
+		xmlSelected and by confirm.htm to clear it after the 
+		install is finished.
+		
+	Parameters:
+		None
+	
+	Return Value:	
+		0 if sucess, 1 if failure
+	-------------------------------------------------------		
+	*/
+	function initXmlSelected()
+	{		
+		var ndTemp = null;
+
+		try{
+			xmlSelected = new ActiveXObject("Microsoft.XMLDOM");		
+			ndTemp = xmlSelected.loadXML("<items_to_install> </items_to_install>");
+		}catch(e){
+			displayError(e.description);
+			return 1;
+		}
+		
+		return 0;
+	}
+	
+	/*	
+	-------------------------------------------------------
+	Name:
+		initXmlSelected
+	
+	Description:
+		Initializes or clears the xmlSelected global variable
+		This method is called by update.htm to initialize 
+		xmlSelected and by confirm.htm to clear it after the 
+		install is finished.
+		
+	Parameters:
+		None
+	
+	Return Value:	
+		0 if sucess, 1 if failure
+	-------------------------------------------------------		
+	*/
+	function initXmlUninstall()
+	{		
+		var ndTemp = null;
+
+		try{
+			xmlUninstall = new ActiveXObject("Microsoft.XMLDOM");		
+			ndTemp = xmlUninstall.loadXML("<items_to_install> </items_to_install>");
+		}catch(e){
+			displayError(e.description);
+			return 1;
+		}
+		
+		return 0;
+	}
+
+	/*	
+	-------------------------------------------------------
+	Name:
+		window::onload
+	
+	Description:
+		Event handler for the window.onload event
+		
+	Parameters:
+		None
+	
+	Return Value:	
+		None
+	-------------------------------------------------------		
+	*/
+	function window::onload()
+	{
+	
+		//initialize xml 
+		initXmlSelected();
+		initXmlUninstall();		
+
+		strBuild = 0;
+		strBuildFull = 0;
+	}	
+	
+	
+	/*
+	-------------------------------------------------------
+	Name:
+		getQueryStringParam
+		
+	Description:
+		Parses parameters from the QueryString
+			
+	Parameters:
+		intSearchString - Query string to parse
+		strDelim - delimiter for the parameter (eg: 'p=')
+		
+	Return Value:	
+		String containing the parameter, or an empty string if not found.
+	-------------------------------------------------------		
+	*/		
+	function getQueryStringParam(intSearchString, strDelim)
+	{
+		var intStart = 0;
+		var intEnd = 0;
+		var intSearchLength = 0;
+		var strOut = '';
+	
+		intSearchLength = intSearchString.length
+		if( intSearchLength == 0)
+			return strOut;
+						
+		intStart = intSearchString.indexOf(strDelim);
+		if(intStart > -1)
+		{
+			intStart = intStart+strDelim.length
+			intEnd = intSearchString.indexOf('&', intStart);
+			if (intEnd == -1)
+				intEnd = intSearchLength;
+		}	
+		
+		strOut = intSearchString.substring(intStart, intEnd);
+		return strOut;
+	}
+	
+	/*
+	-------------------------------------------------------
+	Name:
+		mergeXML
+		
+	Description:
+		Opens an XML & XSL file and merges them into DHTML
+			
+	Parameters:
+		StrXML - filename of the XML file
+		StrXSL - filename of the XSL file
+		
+	Return Value:	
+		DHTML representing the merged content.
+		Or an error string, if a failure occurs.
+	-------------------------------------------------------		
+	*/		
+	function mergeXML(strXML, strXSL)
+	{
+		var strError = 'Could not parse XML data: ';
+		var strLoadXMLFailed = '[ XML load failed ]';
+		var strLoadXSLFailed = '[ XSL load failed ]';
+		var blnRV;
+		var strOut = null;
+		
+		try 
+		{
+			var oXML = new ActiveXObject('Microsoft.XMLDOM');
+			oXML.async = false;	
+
+			var oXSL = new ActiveXObject('Microsoft.XMLDOM');
+			oXSL.async = false;	
+		
+			blnRV = oXML.load(strXML);
+			if(!blnRV)
+			{
+				throw strLoadXMLFailed;
+			}
+		
+			blnRV = oXSL.load(strXSL);
+			if(!blnRV)
+			{
+				throw strLoadXSLFailed;
+			}
+			
+			strOut = oXML.transformNode(oXSL);	
+		}
+		catch(e)	
+		{
+			strOut = strError + e;
+		}
+		
+		return strOut;		
+	}
+	
+
+</SCRIPT>
+
+<!-- By default, it will use the control registered in %winnt% -->
+<!-- If you have problem uninstalling the SDK because the control is not instantiated, 
+comment the next line, uncomment the second <OBJECT ID...> and try again. -->
+
+<OBJECT ID="SDKInstall" CLASSID="CLSID:F2A84794-EE6D-447B-8C21-3BA1DC77C5B4" WIDTH="0" HEIGHT="0"></OBJECT>
+<OBJECT ID="Versions" CLASSID="CLSID:FF982A6F-FB83-42FE-B4BD-1941C499F194" WIDTH="0" HEIGHT="0"></OBJECT> 
+
+<!--
+<OBJECT ID="SDKInstall" CLASSID="CLSID:F2A84794-EE6D-447B-8C21-3BA1DC77C5B4" CODEBASE="controls/sdkinst.cab#Version=-1,-1,-1,-1" WIDTH="0" HEIGHT="0"></OBJECT>
+-->
+
+<HEAD>
+	<META HTTP-EQUIV="PRAGMA" CONTENT="NO-CACHE">
+</HEAD>
+</head>
+
+<frameset id="frmParent" rows="100%" cols="100%">
+	<frame name="frmDisplay" src="remove_local.htm">
+</frameset>
+
+

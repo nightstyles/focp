@@ -1,0 +1,107 @@
+
+################################
+# Option Identification
+################################
+FOCP_MACRO_HEADER=-
+FOCP_INCLUDE_HEADER=-I
+FOCP_LIBDIR_HEADER=-L
+FOCP_LINK_HEADER=-l
+FOCP_LINK_OUT=-o
+
+FOCP_64BIT_FLAG=-m64
+FOCP_32BIT_FLAG=-m32
+FOCP_0BIT_FLAG=
+
+FOCP_MACRO_DEFINES+=FOCP_GCC
+
+ifndef FOCP_SYS_CC
+	FOCP_SYS_CC=gcc
+endif
+ifndef FOCP_SYS_CXX
+	FOCP_SYS_CXX=g++
+endif
+
+ifeq ($(FOCP_BUILD_PLATFORM),$(FOCP_TARGET_PLATFORM))
+	FOCP_CROSS_COMPILE=
+else
+	FOCP_CROSS_COMPILE=$(FOCP_TARGET_PLATFORM)-
+	PATH:=$(FOCP_CROSS_PATH):$(PATH)
+endif
+FOCP_CC=$(FOCP_CROSS_COMPILE)$(FOCP_SYS_CC)
+FOCP_CXX=$(FOCP_CROSS_COMPILE)$(FOCP_SYS_CXX)
+
+ifeq ($(FOCP_TARGET_TYPE),STL)
+	FOCP_LINKER=$(FOCP_CROSS_COMPILE)ar
+	FOCP_LINK_OPT=rv
+endif
+
+ifeq ($(FOCP_TARGET_TYPE),DLL)
+	FOCP_LINKER=$(FOCP_CXX)
+	FOCP_LINK_OPT=-shared -Wl,-Bsymbolic,--warn-common $(FOCP_BINARY_TYPE_FLAG)
+#	FOCP_LINK_OPT+=-fPIC
+endif
+
+ifeq ($(FOCP_TARGET_TYPE),EXE)
+	FOCP_LINKER=$(FOCP_CXX)
+	FOCP_LINK_OPT=-Wl,-E
+	FOCP_LINK_OPT+=-Wl,-Bsymbolic -Wl,--warn-common $(FOCP_EXT_LINK_OPT) $(FOCP_BINARY_TYPE_FLAG)
+endif
+
+ifeq ($(FOCP_TARGET_TYPE),OBJ)
+	FOCP_LINKER=$(FOCP_CROSS_COMPILE)ld
+	FOCP_LINK_OPT=-N -r
+	ifeq ($(FOCP_BINARY_TYPE),32BIT)
+		FOCP_LINK_OPT+=-m elf_i386
+	endif
+	ifeq ($(FOCP_BINARY_TYPE),64BIT)
+		FOCP_LINK_OPT+=-m elf_x86_64
+	endif
+endif
+
+ifneq ($(FOCP_GPROFILE),)
+	FOCP_CMP+=-pg
+endif
+
+FOCP_CMP+=$(FOCP_BINARY_TYPE_FLAG) -static -Wno-unused -Wpointer-arith -fPIC
+FOCP_DEBUG_CMP:=$(FOCP_CMP)
+ifeq ($(FOCP_DEBUG_SWITCH),1)
+	FOCP_CMP+=-Wall -ggdb
+endif
+FOCP_DEBUG_CMP+=-Wall -ggdb
+
+FOCP_CPPCMP+=$(FOCP_CMP)
+FOCP_CCMP+=$(FOCP_CMP) -Who-pointer-sign
+FOCP_DEBUG_CPPCMP+=$(FOCP_DEBUG_CMP)
+FOCP_DEBUG_CCMP+=$(FOCP_DEBUG_CMP) -Who-pointer-sign
+
+################################
+# Other define
+################################
+ifneq ($(FOCP_TARGET_TYPE),STL)
+	ifneq ($(FOCP_TARGET_TYPE),OBJ)
+		FOCP_SYSLIBS+=pthread nsl dl
+	endif
+endif
+
+ifneq ($(FOCP_CROSS_COMPILE),)
+	ifneq ($(FOCP_CROSS_INCLUDE),)
+		FOCP_INCLUDES+=$(foreach hpath, $(shell echo $(FOCP_CROSS_INCLUDE) | tr ':' ' '), FOCP_INCLUDE_LIST+=$(hpath))
+	endif
+else
+	FOCP_INCLUDE_LIST+=/usr/include
+endif
+
+ifneq ($(FOCP_CROSS_COMPILE),)
+	ifneq ($(FOCP_CROSS_LIBPATH),)
+		FOCP_LIBDIR_LIST += $(foreach libpath, $(shell echo $(FOCP_CROSS_LIBPATH) | tr ':' ' '), $(libpath))
+	endif
+else
+	ifeq ($(FOCP_BINARY_TYPE),64BIT)
+		FOCP_LIBDIR_LIST+=/lib64 /usr/lib64
+	endif
+	ifeq ($(FOCP_BINARY_TYPE),32BIT)
+		FOCP_LIBDIR_LIST+=/emul/ia32-linux/usr/lib /lib32 /usr/lib32
+	endif
+	FOCP_LIBDIR_LIST+=/lib /usr/lib
+endif
+FOCP_RPATH=-Wl,-rpath

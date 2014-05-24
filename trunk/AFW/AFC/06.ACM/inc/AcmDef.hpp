@@ -1,0 +1,44 @@
+
+#include "../../05.ASF/ASF.hpp"
+
+#ifndef _ACM_DEFINE_HPP_
+#define _ACM_DEFINE_HPP_
+
+#ifdef ACM_EXPORTS
+#define ACM_API FOCP_EXPORT
+#else
+#define ACM_API FOCP_IMPORT
+#endif
+
+FOCP_BEGIN();
+
+enum
+{
+	//UDP模块定义
+	ACM_SERIAL_MODULE = 0,
+	ACM_TOKEN_MODULE = 1,
+
+	//UDP插件定义
+	ASM_SYSTEM_PLUGIN = 0,
+	ASM_MDBREP_PLUGIN = 1,
+
+	//令牌族定义,只能用低16位
+	ACM_VIP_TOKEN = 1,//高16位用于表示vip索引
+	ACM_MDB_REPLICATION_TOKEN = 2,
+	ACM_MDB_STORAGE_TOKEN = 3,
+
+	//TCP模块定义
+	ACM_HELLO_MODULE = 0,
+	MDB_SERVER_MODULE = 1,
+	MDB_TRANSFER_MODULE = 2,
+
+	//TCP系统MAGIC
+	ACM_TCP_MAGIC = 0xABCDEFAB,
+
+	//能力定义
+	ACM_TCPSVR_ABILITY = 1,
+};
+
+FOCP_END();
+
+#endif

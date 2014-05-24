@@ -1,0 +1,75 @@
+
+#######################################
+# 源代码文件目录列表定义：
+#	FOCP_VOB_DIR，源代码根目录定义，需要定义为xxxxx/focp/../的路径全名
+#	FOCP_SOURCE_LIST，.c/.cpp文件所在目录列表
+#	FOCP_INCLUDE_LIST，头文件坐在目录列表
+#	FOCP_EXTEND_OBJS，FOCP_EXTEND_SOURCES：如果只想编译
+#		某目录下的部分文件，可以定义这两个变量，
+#		FOCP_EXTEND_OBJS，定义扩展的目标文件列表【去除.o的简单文件名】
+#		FOCP_EXTEND_SOURCES，定义扩展目标文件的源代码搜索路径列表
+#######################################
+ifeq ($(FOCP_VOB_DIR),)
+	ifneq ($(SVNVOB),)
+		FOCP_VOB_DIR=$(SVNVOB)
+	else
+		ifneq ($(SVNREP),)
+			FOCP_VOB_DIR=$(SVNREP)
+		else
+			FOCP_VOB_DIR=/vob
+		endif
+	endif
+endif
+
+#######################################
+# 目标选项定义
+#	FOCP_APP_HOME：应用目标所在的根目录，缺省为$(FOCP_USER_HOME)/$(FOCP_PROJECT_NAME)/$(FOCP_APP_NAME)
+#		FOCP_USER_HOME，缺省为$(HOME)
+#		FOCP_PROJECT_NAME，缺省为focp
+#		FOCP_APP_NAME，需要由应用定义
+#		一般编译项目时，需要定义上述环境变量，编译库或模块都可以不定义。
+#	FOCP_MODULE_NAME：模块名字
+#	FOCP_TARGET_TYPE：模块目标类型EXE，STL，DLL，OBJ
+#		EXE，编译模块为可执行文件
+#		STL，编译模块为静态库
+#		DLL，编译模块为动态库或共享库
+#		OBJ，编译目标为普通.o目标文件，目前仅仅GCC支持。
+#		FOCP_LIB_HOME，动态库输出路径，缺省为$(FOCP_APP_HOME)/lib
+#		FOCP_STATIC_HOME，态库输出路径，缺省为$(FOCP_APP_HOME)/static
+#		FOCP_OBJ_HOME，为.o目标输出路径，缺省为$(FOCP_APP_HOME)/obj，
+#			实际为FOCP_OBJ_DIR，在$(FOCP_OBJ_HOME)/$(FOCP_MODULE_NAME)下。
+#		如果编译目标为OBJ，那么它的子模块，如果也是OBJ，那么父辈目标目录下，
+#			形成一棵文件树。
+#######################################
+
+#######################################
+# 连接文件定义
+# FOCP_LIBDIR_LIST，库文件搜索路径定义，系统自定义了系统库搜索路径，
+#	还包括$(FOCP_LIB_HOME)和$(FOCP_STATIC_HOME)，应用层还可以添加自己的搜索
+# FOCP_LIB_LIST，连接的库文件列表，注意不要文件的后缀名，
+#	对于Unix系统，也不要lib的开头的前缀名
+#######################################
+
+#######################################
+# 宏定义FOCP_MACRO_DEFINES
+#	是一个列表
+#	每个定义项，不带宏定义的-D之类的前缀
+#######################################
+
+#######################################
+# 子模块定义FOCP_MODULE_LIST
+#	为子模块makfile文件的目录路径全名的列表。
+#######################################
+
+#######################################
+# 安装小节copy定义：
+#	可以在该小节中使用$(FOCP_CP)、$(FOCP_RM)、$(FOCP_CHMOD)进行文件拷贝、删除及修改文件属性
+#	使用$(FOCP_MKDIR)创建文件目录，也可以用FOCP_MKDIR_LIST来定义，及定义需要创建的目标目录
+#	一般是编译项目时需要。
+#######################################
+
+
+#######################################
+# 包含基础文件
+#######################################
+include $(FOCP_VOB_DIR)/focp/MakeOption/option.incl
