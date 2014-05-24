@@ -1,0 +1,8 @@
+###############################################################
+#本表定义子系统号配置模型，以便从网络节点号提取相应子系统号。
+#SubsystemType：	子系统号类型	UINT32 >=1
+#SubsystemBits：	子系统号位长	UINT32	1..(32-DependOffset)
+#SubsystemOffset：子系统号偏移	UINT32	0..31(从左到右)
+#SubsystemDesc：	子系统号描述	String	0..64
+###############################################################
+SubsystemType SubsystemBits SubsystemOffset SubsystemDesc

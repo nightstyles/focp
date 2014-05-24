@@ -1,0 +1,35 @@
+##################################################
+# 数据文件格式定义规范：
+#   （1）字符#开始的行为注释行，#字符前可有多个空白字符，空行也相当于注释行
+#   （2）第一个非注释行为列名行（列名采用C语言标识符词法），其它非注释行为数据行。
+#   （3）列之间采用空格或水平制表符隔开。
+#   （4）行之间采用[回车]换行符隔开。
+#   （5）列值支持转义符表达【单引号、双引号可直接使用】：
+#        \w  空格【新增】
+#        \r  回车
+#        \n  换行
+#        \f  换页
+#        \b  退格
+#        \v  垂直制表
+#        \t  水平制表
+#        \a  警告
+#        \[x|X]HH 十六进制转义
+#        \任何字符 任何字符
+#   （6）空值：NULL[大小写无关]，文本NULL可用N\ULL表示
+########################################################################################
+# 本表定义应用的MDB复制模块配置【根据MdbService定向提取】
+# MdbName:           STRING 本地数据库名
+# TableName:         STRING 参与数据复制的表名
+# TransferIdx:       STRING 传输索引定义[唯一索引，并支持范围查询]
+# ReplicateTable:    UINT32 1支持Insert/Delete/Truncate操作复制；0不支持
+# WithoutFields:     UINT32 1后续的字段列表不支持Update操作复制【未在列表中的支持】，
+#                           0后续的字段列表支持Update操作复制【未在列表中的不支持】。
+# Fields:            STRING WithoutFields修饰的字段列表
+# Where:             STRING 限定参与数据复制的条件，和MDB SQL的Where一样, NULL表示不限制条件
+########################################################################################
+MdbName       TableName       TransferIdx       ReplicateTable   WithoutFields   Fields  Where
+Mdb           MyProfile       MyProfileIndex    1                1               NULL    NULL
+sysdb         MdbStoreEvent   MainIndex         1                1               NULL    NULL
+sysdb         MdbSecurity     MdbSecurityIndex  1                1               NULL    NULL
+sysdb         sysdbStoreEvent sysdbMainIndex    1                1               NULL    NULL
+sysdb         AccessControl   AccessControlIndex 1               1               NULL    NULL

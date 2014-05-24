@@ -1,0 +1,328 @@
+
+/*
+消息文法：
+	文法 := {结构|消息|别名定义};
+	结构 := 'struct' 类型名 [ '{' {字段1 |字段2  ';'} '}' ] ';'
+		当没有定义结构体时表示向前说明
+		不能用于全局的消息定义，只能作为字段类型使用。
+	消息 := 'message' 类型名 = 整数 ';'
+		整数用以指示MsgId
+	字段1 := [mandatory] 类型 字段名 [ '['整数']' ] [=默认值]
+		整数，用以指定向量最大单元数，如果不指定，表示不是向量
+		默认值，表示为空时的默认值，只有简单类型才允许默认值
+		Mandatory、向量、默认值三个设置选项是互斥的
+	字段2 := 别名 字段名
+	别名定义 := alias [mandatory] 类型 别名 [ '['整数']' ] [=默认值] ';'
+
+	类型 := int8 | int16 | int32 | int64 | uint8 | uint16 | uint32 | uint64 | float | double |
+			string(整数) | vstring(整数) | date | time | datetime | 结构类型
+*/
+
+TOKENS:
+	Comments = SKIP "//[(//^\n*\n?)(/*[</*//!>@]*/*//)]" .
+
+	CONST INSENSITIVE structkey = "struct" .
+	CONST INSENSITIVE unionkey = "union" .
+	CONST INSENSITIVE message = "message" .
+	CONST INSENSITIVE mandatory = "mandatory" .
+	CONST INSENSITIVE alias = "alias" .
+
+	CONST Equal = "=" .
+	CONST LeftParen = "(" .
+	CONST RightParen = ")" .
+	CONST LeftBrace = "{" .
+	CONST RightBrace = "}" .
+	CONST LeftBracket = "[" .
+	CONST RightBracket = "]" .
+	CONST Semicolon = ";" .
+	CONST Plus = "+" .
+	CONST Minus = "-" .
+
+	Identifier = "[%AZ%%az%_][%AZ%%az%_%09%]*" .
+	ConstString = "\"[(\\@)<[\"\n]!>@]*\"" .
+	ConstInteger = "[(%19%%09%*)(0[([xX][%09%%AF%%af%][%09%%AF%%af%]*)(%07%*)])][([uU][lL8(16)(32)(64)]?)([iI][8(16)(32)(64)])]?" .
+	ConstFloat = "[(.%09%*([eE][/+/-]%09%%09%*)?)(%09%%09%*[(.%09%*([eE][/+/-]%09%%09%*)?)([eE][/+/-]%09%%09%*)])][fF]?" .
+
+RULES:
+	type CreateStruct(token oKey, token oName);
+	int CreateMessage(token oName, token nMsgId);
+	int CreateField(type pType, token oMandatory, token oTypeName, token oMaxLen, token oFieldName, token oVector, token oSign, token oDefault);
+	int CloseStruct(type pType);
+	int CreateAlias(token oMandatory, token oTypeName, token oMaxLen, token oAliasName, token oVector, token oSign, token oDefault);
+
+	Main MainRule =
+	{
+		(?
+			StructTypeDefine
+			MessageTypeDefine
+			(alias AliasDefine Semicolon)
+		?)
+	} .
+
+	StructTypeDefine = <token oKey, token oName, type pType>
+	(
+		(?
+			structkey<!oKey!>
+			unionkey<!oKey!>
+		?)
+		Identifier<!oName!>
+		(.
+			pType = CreateStruct(oKey, oName);
+		.)
+		{?
+			LeftBrace
+			{
+				FieldDefine<!oName, pType!>
+				Semicolon
+			}
+			RightBrace
+			(.
+				CloseStruct(pType);
+			.)
+		?}
+		Semicolon
+	) .
+
+	MessageTypeDefine = <token oName, token nMsgId, int nErr>
+	(
+		message Identifier<!oName!> Equal ConstInteger<!nMsgId!> Semicolon
+		(.
+			nErr = CreateMessage(oName, nMsgId);
+			switch(nErr)
+			{
+			case 1:
+				Error(FALSE, oName, "Undefined struct type");
+				break;
+			case 2:
+				Error(FALSE, oName, "Require the struct type");
+				break;
+			case 3:
+				Error(FALSE, nMsgId, "Reuse the message number");
+				break;
+			case 4:
+				Error(FALSE, oName, "Redefine the message");
+				break;
+			}
+		.)
+	) .
+
+	FieldDefine<token oName, type pType> = <
+					token oMandatory,
+					token oTypeName,
+					token oMaxLen,
+					token oFieldName,
+					token oVector,
+					token oDefault,
+					token oSign,
+					int nErr
+				  >
+	(
+		{? mandatory<!oMandatory!> ?}
+		Identifier<!oTypeName!>
+		{?
+			LeftParen
+			ConstInteger<!oMaxLen!>
+			RightParen
+		?}
+		Identifier<!oFieldName!>
+		{?
+			LeftBracket
+			ConstInteger<!oVector!>
+			RightBracket
+		?}
+		{?
+			Equal
+			(?
+				ConstString<!oDefault!>
+				(
+					{?
+						(?
+							Plus<!oSign!>
+							Minus<!oSign!>
+						?)
+					?}
+					(?
+						ConstInteger<!oDefault!>
+						ConstFloat<!oDefault!>
+					?)
+				)
+			?)
+		?}
+		(.
+			nErr = CreateField(pType, oMandatory, oTypeName, oMaxLen, oFieldName, oVector, oSign, oDefault);
+			switch(nErr)
+			{
+			case 1: //必选参数不支持向量
+				Error(FALSE, oVector, "Mandatory option doesn't support vector field");
+				break;
+			case 2: //必选参数不能有缺省值
+				Error(FALSE, oDefault, "Mandatory option doesn't support default value");
+				break;
+			case 3: //向量类型不能有缺省值
+				Error(FALSE, oDefault, "Vector field doesn't support default value");
+				break;
+			case 4: //未定义的字段类型
+				Error(FALSE, oTypeName, "Undefined field type");
+				break;
+			case 5: //结构类型不支持缺省值
+				Error(FALSE, oDefault, "Struct type doesn't support default value");
+				break;
+			case 6: //需要整型常量
+				Error(FALSE, oDefault, "Require the integer const");
+				break;
+			case 7: //需要浮点常量
+				Error(FALSE, oDefault, "Require the float const");
+				break;
+			case 8: //无效日期格式
+				Error(FALSE, oDefault, "Invalid date const");
+				break;
+			case 9: //无效时间格式
+				Error(FALSE, oDefault, "Invalid time const");
+				break;
+			case 10: //无效日期时间格式
+				Error(FALSE, oDefault, "Invalid datetime const");
+				break;
+			case 11: //需要字符串常量
+				Error(FALSE, oDefault, "Require the string const");
+				break;
+			case 12: //浮点溢出
+				Error(FALSE, oDefault, "The float const overflow");
+				break;
+			case 13: //整型溢出
+				Error(FALSE, oDefault, "The integer const overflow");
+				break;
+			case 14: //已完成定义
+				Error(FALSE, oName, "Redefine struct type");
+				break;
+			case 15: //重复定义字段
+				Error(FALSE, oFieldName, "Redefine field");
+				break;
+			case 16: //非字符串类型不能设置长度
+				Error(FALSE, oMaxLen, "non-string type doesn't the length option");
+				break;
+			case 17: //字符串类型必须设置长度
+				Error(FALSE, oTypeName, "string type must set the length option");
+				break;
+			case 18: //联合体字段不能是必选字段
+				Error(FALSE, oMandatory, "the union's field doesn't support mandatory option");
+				break;
+			case 19: //联合体字段不支持缺省值
+				Error(FALSE, oDefault, "the union's field doesn't support default value");
+				break;
+			case 20: //重复声明向量
+				Error(FALSE, oVector, "redeclare vector");
+				break;
+			case 21: //重复声明长度
+				Error(FALSE, oMaxLen, "redeclare length");
+				break;
+			}
+		.)
+	) .
+
+	AliasDefine = <
+			token oMandatory,
+			token oTypeName,
+			token oMaxLen,
+			token oAliasName,
+			token oVector,
+			token oDefault,
+			token oSign,
+			int nErr
+		>
+	(
+		{? mandatory<!oMandatory!> ?}
+		Identifier<!oTypeName!>
+		{?
+			LeftParen
+			ConstInteger<!oMaxLen!>
+			RightParen
+		?}
+		Identifier<!oAliasName!>
+		{?
+			LeftBracket
+			ConstInteger<!oVector!>
+			RightBracket
+		?}
+		{?
+			Equal
+			(?
+				ConstString<!oDefault!>
+				(
+					{?
+						(?
+							Plus<!oSign!>
+							Minus<!oSign!>
+						?)
+					?}
+					(?
+						ConstInteger<!oDefault!>
+						ConstFloat<!oDefault!>
+					?)
+				)
+			?)
+		?}
+		(.
+			nErr = CreateAlias(oMandatory, oTypeName, oMaxLen, oAliasName, oVector, oSign, oDefault);
+			switch(nErr)
+			{
+			case 1: //必选参数不支持向量
+				Error(FALSE, oVector, "Mandatory option doesn't support vector field");
+				break;
+			case 2: //必选参数不能有缺省值
+				Error(FALSE, oDefault, "Mandatory option doesn't support default value");
+				break;
+			case 3: //向量类型不能有缺省值
+				Error(FALSE, oDefault, "Vector field doesn't support default value");
+				break;
+			case 4: //未定义的字段类型
+				Error(FALSE, oTypeName, "Undefined field type");
+				break;
+			case 5: //结构类型不支持缺省值
+				Error(FALSE, oDefault, "Struct type doesn't support default value");
+				break;
+			case 6: //需要整型常量
+				Error(FALSE, oDefault, "Require the integer const");
+				break;
+			case 7: //需要浮点常量
+				Error(FALSE, oDefault, "Require the float const");
+				break;
+			case 8: //无效日期格式
+				Error(FALSE, oDefault, "Invalid date const");
+				break;
+			case 9: //无效时间格式
+				Error(FALSE, oDefault, "Invalid time const");
+				break;
+			case 10: //无效日期时间格式
+				Error(FALSE, oDefault, "Invalid datetime const");
+				break;
+			case 11: //需要字符串常量
+				Error(FALSE, oDefault, "Require the string const");
+				break;
+			case 12: //浮点溢出
+				Error(FALSE, oDefault, "The float const overflow");
+				break;
+			case 13: //整型溢出
+				Error(FALSE, oDefault, "The integer const overflow");
+				break;
+			case 14: //类型重名
+				Error(FALSE, oAliasName, "Redefine type into alias");
+				break;
+			case 15: //重复定义别名
+				Error(FALSE, oAliasName, "Redefine alias");
+				break;
+			case 16: //非字符串类型不能设置长度
+				Error(FALSE, oMaxLen, "non-string type doesn't the length option");
+				break;
+			case 17: //字符串类型必须设置长度
+				Error(FALSE, oTypeName, "string type must set the length option");
+				break;
+			case 18: //联合体字段不能是必选字段
+				Error(FALSE, oMandatory, "the union's field doesn't support mandatory option");
+				break;
+			case 19: //联合体字段不支持缺省值
+				Error(FALSE, oDefault, "the union's field doesn't support default value");
+				break;
+			}
+		.)
+	) .
+

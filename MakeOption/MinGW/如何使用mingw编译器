@@ -1,0 +1,7 @@
+因为mingw不和windows注册表打交道，所以可以直接使用。
+（1）增减环境变量MINGW_VERSION=4.7.0，这个4.70可以改成对应的版本号。
+（2）增加环境变量MINGW_PATH，以指定mingw的安装目录
+（3）在PATH中添加%MINGW_PATH%\bin;%MINGW_PATH%\libexec\gcc\mingw32\%MINGW_VERSION%
+（4）增加环境变量MINGW_INCLUDE=%MINGW_PATH%\include;%MINGW_PATH%\lib\gcc\mingw32\%MINGW_VERSION%
+\include;%MINGW_PATH%\include\c++\%MINGW_VERSION%;%MINGW_PATH%\include\c++\%MINGW_VERSION%\mingw32;%MINGW_PATH%\include\c++\%MINGW_VERSION%\backward
+（5）添加环境变量MINGW_LIBDIR=%MINGW_PATH%\lib;%MINGW_PATH%\lib\gcc\mingw32\%MINGW_VERSION%

@@ -1,0 +1,22 @@
+
+ifeq ($(FOCP_COMPILER),MSVC8)
+$(FOCP_OBJ_DIR)/CooperatorDebug.$(FOCP_OBJ_SUFFIX): CooperatorDebug.cpp
+ifeq ($(FOCP_COMPILE_DETAIL),)
+ifeq ($(FOCP_COMPILE_INFO),1)
+	@echo compile $< to $@
+endif
+	@$(FOCP_CXX) $(FOCP_DEBUG_CPPCMP) $(FOCP_EXT_CPP_OPT) $(FOCP_DEFINES) $(FOCP_INCLUDES) /Fo$@ $(FOCP_MACRO_HEADER)c $(if $(findstring /, $<), $<, $(shell pwd)/$<)
+else
+	$(FOCP_CXX) $(FOCP_DEBUG_CPPCMP) $(FOCP_EXT_CPP_OPT) $(FOCP_DEFINES) $(FOCP_INCLUDES) /Fo$@ $(FOCP_MACRO_HEADER)c $(if $(findstring /, $<), $<, $(shell pwd)/$<)
+endif
+else
+$(FOCP_OBJ_DIR)/CooperatorDebug.$(FOCP_OBJ_SUFFIX): CooperatorDebug.cpp
+ifeq ($(FOCP_COMPILE_DETAIL),)
+ifeq ($(FOCP_COMPILE_INFO),1)
+	@echo compile $< to $@
+endif
+	@$(FOCP_CXX) $(FOCP_DEBUG_CPPCMP) $(FOCP_EXT_CPP_OPT) $(FOCP_DEFINES) $(FOCP_INCLUDES) $(FOCP_MACRO_HEADER)o $@ $(FOCP_MACRO_HEADER)c $(if $(findstring /, $<), $<, $(shell pwd)/$<)
+else
+	$(FOCP_CXX) $(FOCP_DEBUG_CPPCMP) $(FOCP_EXT_CPP_OPT) $(FOCP_DEFINES) $(FOCP_INCLUDES) $(FOCP_MACRO_HEADER)o $@ $(FOCP_MACRO_HEADER)c $(if $(findstring /, $<), $<, $(shell pwd)/$<)
+endif
+endif

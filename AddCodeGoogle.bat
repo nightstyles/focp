@@ -1,0 +1,1 @@
+echo 173.194.32.37 code.google.com >> %SystemRoot%\system32\drivers\etc\hosts

@@ -1,0 +1,14 @@
+########################################################################################
+# 本表定义应用各个配置表的提取特征
+# TableName：		 表名 			String 1..256
+# Deploy：			 部署属性		ENUM【0:私有配置；1:网管应用配置；2:网管基础配置；】
+# AppFilterFlag：	 应用过滤标识	ENUM【0:不按应用过滤；1：按应用过滤】
+# SubsystemType：    子系统号类型	UINT32【0：表示不按子系统过滤】
+########################################################################################
+TableName				Deploy	AppFilterFlag	SubsystemType
+FiberService			0		0				0
+FiberWorker				0		0				0
+FiberConfig				0		0				0
+TimerService			0		0				0
+TelnetService			0		0				0
+RdbService              0       0               0
