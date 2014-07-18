@@ -48,6 +48,7 @@ copy:
 ifneq ($(FOCP_OS),WINDOWS)
 	$(FOCP_RM) $(FOCP_APP_HOME)/bin/*.exe
 endif
+	$(FOCP_CP) $(FOCP_VOB_DIR)/focp/Release/Mdb/lib/$(FOCP_OS_NAME)/$(FOCP_COMPILER)/*MdbLoc* $(FOCP_APP_HOME)/lib/.
 
 other:
 	$(FOCP_RM) $(FOCP_VOB_DIR)/focp/Release/Mdb/lib/$(FOCP_OS_NAME)/$(FOCP_COMPILER)

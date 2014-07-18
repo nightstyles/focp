@@ -111,7 +111,7 @@ private:
 	bool m_bResult, m_bUnLoad;
 	CInterfaceManager m_oServiceTable;
 	uint32 m_nServiceCount;
-	uint32 m_nDMN, m_nCNN, m_nAIN;
+	uint32 m_nDMN, m_nCNN, m_nAIN, m_nATN;
 
 	CBaseSingleList<CService> m_oReadyQueue;
 	CBreak* m_pTopBreak;
@@ -130,6 +130,7 @@ public:
 	uint32 GetAIN();
 	uint32 GetATN();
 
+	void SetATN(uint32 nATN);
 	void SetInstance(uint32 nDMN, uint32 nCNN, uint32 nAIN);
 
 	uint32 GetServiceCount();

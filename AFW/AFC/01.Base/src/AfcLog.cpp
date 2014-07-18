@@ -4,6 +4,7 @@
 
 #if defined(WINDOWS)
 	#include <io.h>
+	#include <windows.h>
 #else
 	#include <unistd.h>
 	#include <sys/types.h>
@@ -15,6 +16,7 @@
 	#include <fcntl.h>
 	#include <errno.h>
     #include <arpa/inet.h>
+	#include <pthread.h>
 #endif
 
 #include <time.h>
@@ -379,6 +381,8 @@ void CLogManager::SetLogFilter(const char* sModuleName, uint32 nLogFilter)
 		nVal |= FOCP_LOG_APPN;
 	if(nLogFilter & FOCP_LOG_MODU)
 		nVal |= FOCP_LOG_MODU;
+	if(nLogFilter & FOCP_LOG_TASK)
+		nVal |= FOCP_LOG_TASK;
 	if(nLogFilter & FOCP_LOG_SRCF)
 		nVal |= FOCP_LOG_SRCF;
 	if(nLogFilter & FOCP_LOG_FUNC)
@@ -564,6 +568,8 @@ CAfcLogAttr& CLogManager::GetLogAttr(const char* sModuleName)
 				oAttr.nFilter |= FOCP_LOG_APPN;
 			if(nFilter & FOCP_LOG_MODU)
 				oAttr.nFilter |= FOCP_LOG_MODU;
+			if(nFilter & FOCP_LOG_TASK)
+				oAttr.nFilter |= FOCP_LOG_TASK;
 			if(nFilter & FOCP_LOG_SRCF)
 				oAttr.nFilter |= FOCP_LOG_SRCF;
 			if(nFilter & FOCP_LOG_FUNC)
@@ -689,6 +695,16 @@ uint32 CLogManager::GetLogInfo(uint32 nFilter, CLogInfo& oLogInfo, char sLogInfo
 		if(nFilter & FOCP_LOG_MODU)
 			pShift += snprintf(pShift, pEnd-pShift, "%s", oLogInfo.sModuleName);
 		pShift += snprintf(pShift, pEnd-pShift, "] ");
+	}
+	if(nFilter & FOCP_LOG_TASK)
+	{
+		ulong nTid;
+#ifdef WINDOWS
+		nTid = GetCurrentThreadId();
+#else
+		nTid = pthread_self();
+#endif
+		pShift += snprintf(pShift, pEnd-pShift, "[tid=%lu] ", nTid);
 	}
 	if( (nFilter & FOCP_LOG_SRCF) || (nFilter & FOCP_LOG_FUNC) )
 	{

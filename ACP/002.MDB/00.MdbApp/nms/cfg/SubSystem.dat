@@ -27,7 +27,8 @@
 #                                       1-表示按DMN+ATN+AIN模式构成的子系统号中提取
 #                                             这样就可按应用提取，还可以支持多实例
 #                                             是否支持多实例，由编译决定，多实例应用的实例编号由运行时
-#                                             环境变量‘FocpAppInst’决定(缺省为1)，如果实例编号为0，则强行降级为单实例应用。
+#                                             环境变量‘FocpAppInst’决定(缺省为1)，如果实例编号为0，
+#                                             则强行降级为单实例应用(其值由AppDeploy.dat决定)。
 #SubsystemDesc：系统号描述	String	0..64
 ###############################################################
 SubsystemType SubsystemBits SubsystemOffset NetworkType SubsystemDesc

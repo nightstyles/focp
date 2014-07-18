@@ -40,7 +40,10 @@ FOCP_END();
 int main(int argc, char* argv[])
 {
 	bool bCheck = true;
-#ifndef FOCP_FREE_LICENSE
+#ifdef FOCP_APPLICATION_TYPE_NUMBER
+	FOCP_NAME::CServiceManager::GetInstance()->SetATN(FOCP_APPLICATION_TYPE_NUMBER);
+#endif
+#ifdef FOCP_FREE_LICENSE
 	bCheck = false;
 #else
 	if(!FOCP_NAME::CheckAppName())
@@ -48,3 +51,4 @@ int main(int argc, char* argv[])
 #endif
 	return FOCP_NAME::CApplication::GetInstance()->Run(argc, argv, bCheck);
 }
+

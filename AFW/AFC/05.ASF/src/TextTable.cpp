@@ -675,22 +675,15 @@ bool CInitConfigSystem::Initialize(const char* sNmsCfgHome, const char* sAppCfgH
 	CDiskFileSystem* pFileSystem = CDiskFileSystem::GetInstance();
 
 	if(sNmsCfgHome)
-	{
-		CString::StringCopy(m_sNmsAppCfgHome, sNmsCfgHome);
-		CString::StringCatenate(m_sNmsAppCfgHome, "/");
-		CString::StringCatenate(m_sNmsAppCfgHome, sAppName);
-
 		CString::StringCopy(m_sNmsBaseCfgHome, sNmsCfgHome);
-	}
 	else
 	{
-		CString::StringCopy(m_sNmsAppCfgHome, sAppCfgHome);
-		CString::StringCatenate(m_sNmsAppCfgHome, "/../../nms/cfg");
-		CString::StringCatenate(m_sNmsAppCfgHome, sAppName);
-
 		CString::StringCopy(m_sNmsBaseCfgHome, sAppCfgHome);
 		CString::StringCatenate(m_sNmsBaseCfgHome, "/../../nms/cfg");
 	}
+	CString::StringCopy(m_sNmsAppCfgHome, m_sNmsBaseCfgHome);
+	CString::StringCatenate(m_sNmsAppCfgHome, "/");
+	CString::StringCatenate(m_sNmsAppCfgHome, sAppName);
 
 	if(!pFileSystem->GetFullPath(m_sNmsAppCfgHome, sTmpPath, &oDetailInfo))
 		return false;
@@ -916,8 +909,8 @@ bool CInitConfigSystem::Load()
 		FocpLog(FOCP_LOG_ERROR, ("Invalid AIN config"));
 		return false;
 	}
-	pServiceManager->SetInstance(nDMN,nCNN, nAIN);
-	SetLogInstance(nDMN,nAIN);
+	pServiceManager->SetInstance(nDMN, nCNN, nAIN);
+	SetLogInstance(nDMN, nAIN);
 	m_nNetworkNo1 = nNetworkNo;
 	m_nNetworkNo2 = (nDMN << (32-m_oSystemSsn[0].nSubsystemOffset-m_oSystemSsn[0].nSubsystemBits)) |
 					(nATN << (32-m_oSystemSsn[2].nSubsystemOffset-m_oSystemSsn[2].nSubsystemBits)) |
