@@ -34,7 +34,7 @@ static void GetMdbAccessInfo()
 	CString oRandom, oUser, oPasswd;
 	GetRandomString(oRandom, 10, "");
 loop2:
-	Print("Please input the MDB USER(max 8 non-white-space character):");
+	Print("Please input the MDB USER(max 8 non-white-space character):\n");
 	if(Scan("%8s", &oUser) != 1)
 		goto loop2;
 	oUser.Trim();
@@ -42,7 +42,7 @@ loop2:
 	if(nLen == 0 || nLen > 8)
 		goto loop2;
 loop3:
-	Print("Please input the MDB PASSWORD(max 8 non-white-space character):");
+	Print("Please input the MDB PASSWORD(max 8 non-white-space character):\n");
 	if(Scan("%8s", &oPasswd) != 1)
 		goto loop3;
 	oPasswd.Trim();

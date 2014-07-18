@@ -104,4 +104,4 @@ else
 	endif
 	FOCP_LIBDIR_LIST+=/lib /usr/lib
 endif
-FOCP_RPATH=-Wl,-rpath
+FOCP_RPATH_FLAG=-Wl,-rpath

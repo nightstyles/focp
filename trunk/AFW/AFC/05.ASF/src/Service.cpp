@@ -459,12 +459,17 @@ uint32 CServiceManager::GetCNN()
 
 uint32 CServiceManager::GetATN()
 {
-	return FOCP_APPLICATION_TYPE_NUMBER;
+	return m_nATN;
 }
 
 uint32 CServiceManager::GetAIN()
 {
 	return m_nAIN;
+}
+
+void CServiceManager::SetATN(uint32 nATN)
+{
+	m_nATN = nATN;
 }
 
 void CServiceManager::SetInstance(uint32 nDMN, uint32 nCNN, uint32 nAIN)
